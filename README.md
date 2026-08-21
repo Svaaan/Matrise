@@ -177,6 +177,124 @@ losing meaning.
 
 ---
 
+## Getting it onto a machine
+
+There is no installer and there is nothing to build. Copy the folder, run the
+`.bat`. It is plain PowerShell — no compiled binary, no dependencies, no
+registry, no service.
+
+Put it somewhere your account can write, like `Documents\Matrise`. It writes
+`reports\`, `audit\` and `matrise-layout.json` next to itself, so `Program
+Files` would need admin for every run.
+
+If the folder arrived by browser download, email, or a zip, Windows marks the
+files as untrusted:
+
+```bash
+powershell -ExecutionPolicy Bypass -File Matrise.ps1 -Unblock
+```
+
+Copying over the network or on a USB stick usually avoids that entirely.
+
+### She probably does not need it installed
+
+This is the part worth knowing before you go and set up two machines.
+
+Remote commands travel over **WinRM, which is already part of Windows**. To run
+diagnostics on her PC, and to put a message on her screen, she needs *nothing
+installed* — only the one pairing script from **Home setup**, run once.
+
+Install Matrise on her PC only if you want the extras:
+
+| | Needs Matrise on her PC? |
+|---|---|
+| Run any of the 62 commands against her machine | no |
+| Put a message on her screen | no |
+| Her seeing messages in an app, and replying | yes |
+| Her running checks on her own machine herself | yes |
+
+So the short version: **your PC gets the folder, hers gets one script.**
+
+### Testing before you involve her
+
+You can prove the whole remote path on one machine. Enable WinRM on your own PC,
+then loop back through it:
+
+```bash
+powershell -ExecutionPolicy Bypass -File Matrise.ps1 -TestRemote %COMPUTERNAME%
+```
+
+Normally your own computer name means "run locally"; `-TestRemote` forces it
+around the network path anyway. It runs the connection check, then executes a
+command over WinRM and prints the machine name it actually ran on. If that
+works, the machinery is sound and anything left is her side.
+
+Enabling WinRM opens a listener on your own PC. Undo it with
+`Disable-PSRemoting -Force`, then `Stop-Service WinRM` and
+`Set-Service WinRM -StartupType Disabled`.
+
+---
+
+## Helping someone at home
+
+Two PCs in a house are not in a domain, so none of the corporate machinery
+applies — and you don't need it. **Requests and approvals are a workplace
+feature**; with no policy file loaded, every command is simply available to you
+and that button now says so instead of sending you looking for a corporate
+share.
+
+What you do need is for the two machines to be introduced to each other once.
+**Home setup** walks both halves:
+
+**On their PC** — they run one script, as Administrator. It sets the network
+profile to Private (remote help is blocked on Public, which is correct
+behaviour in a café), turns on Windows remote management, and prints the
+computer name and username you'll need. The undo command is at the bottom of
+the script.
+
+They have to run it themselves, on their own machine, elevated. That isn't an
+obstacle to route around — it's the reason this can't happen to someone without
+their taking part.
+
+**On your PC** — add their computer name to your trusted list. One name at a
+time; Matrise will not write `*` there.
+
+Then put their computer name in the **Machine** box, press **Run as...**, and
+enter the username and password their script printed.
+
+> If they sign in with a Microsoft account, the username is usually their email
+> address and the password is the one they type at startup. **A PIN will not
+> work** — a PIN is tied to that physical machine and cannot authenticate over
+> a network. This catches everyone once.
+
+### Messages
+
+**Send message** puts a box on their screen. It works whether or not they have
+Matrise open:
+
+- On Windows Pro it uses `msg.exe`.
+- On Windows **Home**, which has no `msg.exe`, it registers a one-shot task that
+  runs in their interactive session and shows the box from there. A process
+  started over remote management otherwise lands in session 0, where nothing it
+  draws is visible to the person sitting at the machine.
+
+If they also have Matrise, the message additionally lands in their inbox, and
+their Matrise pops it up within a few seconds and writes it to their board.
+
+**Every message carries your username and computer name, added on the receiving
+side.** There is deliberately no anonymous or spoofable option: a tool that can
+put arbitrary unattributed text on someone else's screen is a phishing tool.
+
+### What is not tested
+
+I could verify the local paths — inbox write/read, the pairing script, the
+delivery-mechanism selection — but **not the actual hop to a second machine**.
+That needs a real second PC, and WinRM is switched off on this one. Expect the
+first connection to need a bit of fiddling; **Test connection** is built to tell
+you which link in the chain is the broken one.
+
+---
+
 ## Running it in a managed estate
 
 Matrise was written to work inside AD-managed environments where application
@@ -384,6 +502,7 @@ lib\Policy.ps1           policy rules, grants and the audit log
 lib\Requests.ps1         request store, approvals, comment thread
 lib\GuiRequests.ps1      the request and approval windows
 lib\Jea.ps1              generates the constrained endpoint from catalog+policy
+lib\Peer.ps1             home pairing, peer messages, on-screen alerts
 policy.example.json      an example Security policy
 audit\                   local audit log (jsonl, one line per attempt)
 audit\ui-errors.log      full stack traces for anything that goes wrong in the window

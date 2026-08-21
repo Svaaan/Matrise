@@ -441,6 +441,14 @@ function Get-MatriseExplainTable {
         'The rule set your Security team publishes, saying which commands IT Support may run freely, which need approval first, and which are off limits.' `
         'Commands are marked in the list on the left. If nothing is marked, no policy file was found and everything is available.'
 
+    & $e 'ui.homesetup' `
+        'Everything needed to let this PC help another one in the same house. Home PCs are not in a work network, so the two have to be introduced to each other once.' `
+        'Start here before trying to connect to a family member computer. It gives them a script to run and you a button to trust their machine.'
+
+    & $e 'ui.sendmsg' `
+        'Puts a message box on the other person screen, so you can tell them what you are doing or ask them to try something.' `
+        'It works whether or not they have Matrise open. Your name and this computer name are always shown on it - there is no anonymous option.'
+
     & $e 'ui.findbar' `
         'The search bar for the board.' `
         'Ctrl+F brings you here from anywhere in the window.'

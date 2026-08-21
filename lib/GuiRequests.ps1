@@ -132,6 +132,130 @@ function Show-MxPolicyStop {
     $d.Dispose()
 }
 
+# ------------------------------------------------------------- home use ----
+# Everything needed to pair two PCs in a house, where there is no domain, no
+# Kerberos and no IT department.
+function Show-MxHomeSetup {
+    param($Target)
+
+    $name = ''
+    if ($Target -and $Target.Mode -eq 'remote') { $name = $Target.Name }
+
+    $d = New-Object System.Windows.Forms.Form
+    $d.Text = 'Matrise - help another PC in this house'
+    $d.StartPosition = 'CenterParent'
+    $d.ClientSize = New-Object System.Drawing.Size(760, 620)
+    $d.MinimumSize = New-Object System.Drawing.Size(680, 520)
+    $d.BackColor = $script:MxBg; $d.ForeColor = $script:MxFg
+
+    $title = New-MxLabel -Text 'Two steps, one on each PC' -Size 12 -Bold $true
+    $title.SetBounds(16, 12, 700, 24)
+    $d.Controls.Add($title)
+
+    $intro = New-MxLabel -Text (@(
+        'Home PCs are not in a domain, so Windows does not trust them with each other by',
+        'default. That trust has to be granted once, deliberately, on both machines.'
+    ) -join "`r`n") -Size 9 -Color $script:MxDim
+    $intro.SetBounds(16, 40, 720, 36)
+    $d.Controls.Add($intro)
+
+    $s1 = New-MxLabel -Text 'STEP 1 - on the PC that needs help' -Size 10 -Bold $true -Color $script:MxAccent
+    $s1.SetBounds(16, 82, 500, 20)
+    $d.Controls.Add($s1)
+
+    $s1d = New-MxLabel -Text (@(
+        'They run this once, as Administrator. It turns on Windows remote management and',
+        'prints the computer name and username you will need. They can undo it any time -',
+        'the undo command is at the bottom of the script.'
+    ) -join "`r`n") -Size 9 -Color $script:MxDim
+    $s1d.SetBounds(16, 104, 720, 46)
+    $d.Controls.Add($s1d)
+
+    $script:MxPairFile = Join-Path $script:MxWorkDir 'reports\Enable-MatriseHelp.ps1'
+    New-Item -ItemType Directory -Path (Split-Path $script:MxPairFile) -Force -ErrorAction SilentlyContinue | Out-Null
+    [void](New-MatrisePairingScript -HelperPc $env:COMPUTERNAME -OutFile $script:MxPairFile)
+
+    $pathBox = New-MxDlgText -X 16 -Y 156 -W 560 -H 26 -Text $script:MxPairFile -ReadOnly $true
+    $d.Controls.Add($pathBox)
+
+    $btnSave = New-MxDlgButton -Text 'Open folder' -W 160
+    $btnSave.SetBounds(584, 154, 160, 30)
+    $btnSave.Add_Click({
+        Start-Process explorer.exe "/select,`"$script:MxPairFile`""
+    })
+    $d.Controls.Add($btnSave)
+
+    $btnCopy = New-MxDlgButton -Text 'Copy the script text' -W 180
+    $btnCopy.SetBounds(16, 190, 180, 30)
+    $btnCopy.Add_Click({
+        $txt = [System.IO.File]::ReadAllText($script:MxPairFile)
+        if (Set-MxClipboard $txt) {
+            [void][System.Windows.Forms.MessageBox]::Show(
+                "Copied. Send it to them however you like - chat, email, USB stick.`r`n`r`nThey paste it into an Administrator PowerShell window and press Enter.",
+                'Matrise', 'OK', 'Information')
+        }
+    })
+    $d.Controls.Add($btnCopy)
+
+    $s2 = New-MxLabel -Text 'STEP 2 - on this PC' -Size 10 -Bold $true -Color $script:MxAccent
+    $s2.SetBounds(16, 236, 500, 20)
+    $d.Controls.Add($s2)
+
+    $s2d = New-MxLabel -Text (@(
+        'Windows will not send your password to an untrusted machine, so their computer',
+        'name has to be added to this one''s trusted list. One name at a time - never *.',
+        'This needs Matrise running as Administrator.'
+    ) -join "`r`n") -Size 9 -Color $script:MxDim
+    $s2d.SetBounds(16, 258, 720, 46)
+    $d.Controls.Add($s2d)
+
+    $nameBox = New-MxDlgText -X 16 -Y 310 -W 300 -H 26 -Text $name
+    $d.Controls.Add($nameBox)
+
+    $btnTrust = New-MxDlgButton -Text 'Trust this computer' -W 180
+    $btnTrust.SetBounds(324, 308, 180, 30)
+    $d.Controls.Add($btnTrust)
+
+    $trustNow = New-MxDlgText -X 16 -Y 348 -W 728 -H 60 -ReadOnly $true `
+        -Text ("Currently trusted: " + $(if (Get-MatriseTrustedHosts) { Get-MatriseTrustedHosts } else { '(none)' }))
+    $d.Controls.Add($trustNow)
+
+    $btnTrust.Add_Click({
+        $n = $nameBox.Text.Trim()
+        if (-not $n) { return }
+        try {
+            $msg = Add-MatriseTrustedHost -Name $n
+            $trustNow.Text = "$msg`r`n`r`nCurrently trusted: " + (Get-MatriseTrustedHosts)
+        } catch {
+            $trustNow.Text = $_.Exception.Message
+        }
+    })
+
+    $s3 = New-MxLabel -Text 'STEP 3 - connect' -Size 10 -Bold $true -Color $script:MxAccent
+    $s3.SetBounds(16, 420, 500, 20)
+    $d.Controls.Add($s3)
+
+    $s3d = New-MxLabel -Text (@(
+        'Put their computer name in the Machine box, press Run as... and enter the username',
+        'and Windows password their script printed, then press Test connection.',
+        '',
+        'If they sign in with a Microsoft account, the username is usually their email',
+        'address and the password is the one they type at startup - not a PIN. A PIN only',
+        'works on the machine itself and cannot be used over the network.'
+    ) -join "`r`n") -Size 9 -Color $script:MxFg
+    $s3d.SetBounds(16, 442, 728, 100)
+    $d.Controls.Add($s3d)
+
+    $ok = New-MxDlgButton -Text 'Close' -W 110 -Result 'Cancel'
+    $ok.SetBounds(628, 560, 110, 30)
+    $ok.Anchor = 'Bottom, Right'
+    $d.Controls.Add($ok)
+    $d.CancelButton = $ok
+
+    [void]$d.ShowDialog($script:MxForm)
+    $d.Dispose()
+}
+
 # The queue, the thread, and the decision.
 function Show-MxRequestsWindow {
     param($Policy)
@@ -139,8 +263,8 @@ function Show-MxRequestsWindow {
     $store = Get-MatriseRequestStore -Policy $Policy
     if (-not (Test-MatriseStoreReachable $store)) {
         [void][System.Windows.Forms.MessageBox]::Show(
-            "The request store is not reachable:`r`n`r`n  $store`r`n`r`nCheck the policy file and that you are on the corporate network.",
-            'Matrise - requests', 'OK', 'Warning')
+            (Get-MatriseNoStoreMessage -Policy $Policy),
+            'Matrise - requests', 'OK', 'Information')
         return
     }
     $canApprove = Test-MatriseCanApprove -Policy $Policy

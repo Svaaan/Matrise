@@ -6,6 +6,7 @@
 #   .\Matrise.ps1 -Analyze <file>        run the rule engine over a file, print, exit
 #   .\Matrise.ps1 -List                  print the catalog with each policy decision
 #   .\Matrise.ps1 -SelfTest              drive the window through a scripted pass
+#   .\Matrise.ps1 -TestRemote <host>     prove the whole remote path end to end
 #
 #   .\Matrise.ps1 -ExportJea <dir>       generate the JEA endpoint from catalog + policy
 #   .\Matrise.ps1 -Requests              list access requests
@@ -20,8 +21,10 @@ param(
     [switch]$List,
     [switch]$SelfTest,
     [string]$Target,
+    [string]$TestRemote,
     [string]$ExportJea,
     [switch]$Requests,
+    [switch]$Unblock,
     [string]$Approve,
     [string]$Deny,
     [int]$Minutes = 0,
@@ -40,6 +43,7 @@ $env:MATRISE_HOME = $root
 . (Join-Path $root 'lib\Analyzer.ps1')
 . (Join-Path $root 'lib\Agent.ps1')
 . (Join-Path $root 'lib\Target.ps1')
+. (Join-Path $root 'lib\Peer.ps1')
 . (Join-Path $root 'lib\Policy.ps1')
 . (Join-Path $root 'lib\Requests.ps1')
 . (Join-Path $root 'lib\Jea.ps1')
@@ -53,6 +57,77 @@ if ($Analyze) {
     $findings = Invoke-MatriseAnalysis -Text $text
     Write-Output (Format-MatriseFindings -Findings $findings)
     exit $(if (@($findings | Where-Object { $_.Severity -in 'Critical', 'High' }).Count -gt 0) { 2 } else { 0 })
+}
+
+# ---- headless: clear the downloaded-from-the-internet mark --------------
+if ($Unblock) {
+    $n = 0
+    Get-ChildItem $root -Recurse -Include *.ps1, *.bat, *.json, *.md -File -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            if (Get-Item $_.FullName -Stream Zone.Identifier -ErrorAction SilentlyContinue) {
+                Unblock-File $_.FullName -ErrorAction SilentlyContinue
+                $n++
+            }
+        }
+    Write-Output "Unblocked $n file(s) under $root."
+    Write-Output 'Windows marks anything arriving by browser, email or zip as untrusted.'
+    exit 0
+}
+
+# ---- headless: prove the remote path, start to finish -------------------
+# Point it at another PC, or at this one's own name to loop back through WinRM
+# and check the machinery before you involve anybody else.
+if ($TestRemote) {
+    $loopback = ($TestRemote -eq $env:COMPUTERNAME -or $TestRemote -eq 'localhost')
+    Write-Output ''
+    Write-Output "MATRISE REMOTE TEST -> $TestRemote$(if ($loopback) { '   (loopback through WinRM)' })"
+    Write-Output ('=' * 64)
+
+    $cred = $null
+    if (-not $loopback) {
+        Write-Output ''
+        Write-Output 'Credentials for that machine. Press Cancel to try your current account.'
+        try { $cred = Get-Credential -Message "Sign in to $TestRemote" } catch { }
+    }
+
+    $t = New-MatriseTarget -Name $TestRemote -Credential $cred -ForceRemote
+    $report = Test-MatriseTarget -Target $t
+    Write-Output (Format-MatriseTargetReport -Report $report -Target $t)
+
+    if ($t.Status -ne 'ok') {
+        Write-Output 'Stopping here - the connection check did not pass. Fix the FAIL above first.'
+        exit 1
+    }
+
+    Write-Output 'Connection is good. Running one harmless command over it...'
+    Write-Output ''
+
+    $probe = [pscustomobject]@{
+        Id = 'test.remote'; Group = 'Test'; Section = 'Test'
+        Name = 'Remote round trip'; Desc = 'hostname + logged-on user on the far end'
+        Shell = 'ps'
+        Command = '"ran on : $env:COMPUTERNAME"' + "`r`n" + '"as     : $env:USERNAME"' + "`r`n" +
+                  '"os     : " + (Get-CimInstance Win32_OperatingSystem).Caption'
+        Impact = 'read'; Admin = $false; Timeout = 90; Prompt = ''; PromptDefault = ''
+    }
+
+    $ctx = New-MatriseRunContext
+    Start-MatriseRun -Context $ctx -Entry $probe -WorkDir $root -Target $t | Out-Null
+    $deadline = (Get-Date).AddSeconds(90)
+    while ((-not $ctx.State['Done']) -or ($ctx.Queue.Count -gt 0)) {
+        while ($ctx.Queue.Count -gt 0) { Write-Output ("   " + $ctx.Queue.Dequeue()) }
+        if ((Get-Date) -gt $deadline) { Write-Output '   *** timed out ***'; break }
+        Start-Sleep -Milliseconds 150
+    }
+    Close-MatriseRun -Context $ctx
+
+    Write-Output ''
+    if ($ctx.State['ExitCode'] -eq 0) {
+        Write-Output 'REMOTE PATH WORKS. The machine name above should be the far end, not this one.'
+        exit 0
+    }
+    Write-Output "REMOTE PATH FAILED (exit $($ctx.State['ExitCode'])). See the message above."
+    exit 1
 }
 
 # ---- headless: the catalog, with what policy says about each -----------
@@ -94,7 +169,7 @@ if ($ExportJea) {
 if ($Requests) {
     $store = Get-MatriseRequestStore -Policy $policy
     if (-not (Test-MatriseStoreReachable $store)) {
-        Write-Error "Request store not reachable: '$store'. Check the policy file and the network."
+        Write-Output (Get-MatriseNoStoreMessage -Policy $policy)
         exit 1
     }
     Write-Output "Request store : $store"

@@ -151,7 +151,7 @@ function Get-MatriseActiveGrants {
         if ($exp.ToUniversalTime() -lt $now.ToUniversalTime()) { continue }
         [void]$out.Add($g)
     }
-    , $out
+    $out.ToArray()
 }
 
 function Test-MatriseGrant {

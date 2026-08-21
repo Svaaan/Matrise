@@ -17,12 +17,16 @@ function New-MatriseTarget {
         [string]$Name = 'localhost',
         [System.Management.Automation.PSCredential]$Credential = $null,
         [switch]$UseSsl,
-        [string]$ConfigurationName = ''
+        [string]$ConfigurationName = '',
+        # Normally this machine's own name means "run locally". ForceRemote
+        # sends it round the WinRM loop anyway, which is the only way to prove
+        # the remote path works without a second computer.
+        [switch]$ForceRemote
     )
 
     $n = $Name.Trim()
     if (-not $n) { $n = 'localhost' }
-    $isLocal = $n -in @('localhost', '.', '127.0.0.1', '::1', $env:COMPUTERNAME)
+    $isLocal = (-not $ForceRemote) -and ($n -in @('localhost', '.', '127.0.0.1', '::1', $env:COMPUTERNAME))
 
     $ipOut = [ref]([ipaddress]::None)
     $isIp  = [ipaddress]::TryParse($n, $ipOut)
@@ -63,7 +67,7 @@ function Test-MatriseTarget {
         $Target.Status = 'ok'
         $Target.Detail = 'local'
         $Target.CheckedAt = Get-Date
-        return , $report
+        return $report.ToArray()
     }
 
     # --- name resolution --------------------------------------------------
@@ -95,7 +99,7 @@ function Test-MatriseTarget {
             ) -join ' ')
             $Target.Status = 'unresolved'
             $Target.CheckedAt = Get-Date
-            return , $report
+            return $report.ToArray()
         }
     }
 
@@ -121,7 +125,7 @@ function Test-MatriseTarget {
         ) -join ' ')
         $Target.Status = 'no-winrm'
         $Target.CheckedAt = Get-Date
-        return , $report
+        return $report.ToArray()
     }
 
     # --- WinRM handshake + authentication ---------------------------------
@@ -157,7 +161,7 @@ function Test-MatriseTarget {
 
     $Target.Detail = ($report | Where-Object { -not $_.Ok } | Select-Object -First 1).Detail
     $Target.CheckedAt = Get-Date
-    , $report
+    $report.ToArray()
 }
 
 function Format-MatriseTargetReport {

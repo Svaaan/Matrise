@@ -18,6 +18,8 @@ if (-not ('Matrise.Native' -as [type])) {
     Add-Type -Namespace Matrise -Name Native -MemberDefinition @'
 [System.Runtime.InteropServices.DllImport("user32.dll")]
 public static extern int SendMessage(System.IntPtr hWnd, int msg, int wParam, System.IntPtr lParam);
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+public static extern System.IntPtr GetForegroundWindow();
 '@
 }
 
@@ -59,6 +61,8 @@ $script:MxHeadExplain = ''
 $script:MxPolicy     = $null
 $script:MxTarget     = $null
 $script:MxReqCurrent = $null
+$script:MxInboxTimer = $null
+$script:MxPairFile  = ''
 $script:MxLayoutReady = $false
 
 # ------------------------------------------------------------ layout ------
@@ -814,6 +818,58 @@ function Update-MxTargetLabel {
     }
 }
 
+# One action, two deliveries: a box on their screen now (which works whether or
+# not they have Matrise open), and a copy in their Matrise inbox for the record.
+function Invoke-MxSendMessage {
+    $to = Get-MatriseTargetLabel -Target $script:MxTarget
+    $text = Show-MxInputDialog -Title 'Send a message' `
+        -Question ("Message to $to." + [Environment]::NewLine +
+                   "It appears on their screen stamped with your name and this PC - " +
+                   "Matrise cannot send anonymously.") -Default ''
+    if ($null -eq $text -or -not $text.Trim()) { $script:MxStatus.Text = 'cancelled'; return }
+
+    $script:MxForm.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+    try {
+        $how = Send-MatriseScreenAlert -Target $script:MxTarget -Text $text.Trim()
+        try { Send-MatrisePeerMessage -Target $script:MxTarget -Text $text.Trim() | Out-Null } catch { }
+        Add-MxBoardLine ''
+        Add-MxBoardLine "*** Message sent to $to (delivered by: $how) ***"
+        Add-MxBoardLine "    $($text.Trim())"
+        Update-MxBoardFlush
+        $script:MxStatus.Text = "message sent to $to"
+    }
+    catch {
+        Add-MxBoardLine ''
+        Add-MxBoardLine "*** Could not send the message ***"
+        Add-MxBoardLine "    $($_.Exception.Message)"
+        Update-MxBoardFlush
+        [void][System.Windows.Forms.MessageBox]::Show(
+            ("Could not deliver the message.`r`n`r`n$($_.Exception.Message)`r`n`r`n" +
+             'If the two PCs are not paired yet, use Home setup first.'),
+            'Matrise', 'OK', 'Warning')
+    }
+    finally { $script:MxForm.Cursor = [System.Windows.Forms.Cursors]::Default }
+}
+
+# Anything addressed to this machine, shown as it arrives.
+function Update-MxInbox {
+    $msgs = @(Get-MatriseInboxMessages -MarkRead)
+    if ($msgs.Count -eq 0) { return }
+    foreach ($m in $msgs) {
+        Add-MxBoardLine ''
+        Add-MxBoardLine '================================================================'
+        Add-MxBoardLine "  MESSAGE from $($m.fromUser) on $($m.fromPc)"
+        Add-MxBoardLine "  $($m.sentUtc) UTC"
+        Add-MxBoardLine '================================================================'
+        foreach ($l in ($m.text -split "`r?`n")) { Add-MxBoardLine "  $l" }
+        Update-MxBoardFlush
+        [void][System.Windows.Forms.MessageBox]::Show(
+            ("$($m.fromUser) on $($m.fromPc) says:`r`n`r`n$($m.text)"),
+            'Matrise - message', 'OK', 'Information')
+    }
+    $script:MxStatus.Text = "$($msgs.Count) message(s) received"
+}
+
 function Invoke-MxTestTarget {
     $name = $script:MxTargetBox.Text.Trim()
     $cred = $script:MxTarget.Credential
@@ -908,10 +964,12 @@ function Invoke-MxSelfTestPhase1 {
 
     # The hover panel: our own window, themed, placed exactly where asked,
     # and gone the moment it is dismissed.
-    # What matters is that showing the panel does not TAKE focus, not that the
-    # window happened to have it when the test ran.
-    $focusBefore = $script:MxForm.ContainsFocus
+    # Assert on the foreground window rather than on our own ContainsFocus:
+    # that is measurable whether or not Matrise happens to be the active app,
+    # so the check actually fires every run instead of passing by default.
+    $fgBefore = [Matrise.Native]::GetForegroundWindow()
     Show-MxPop -Text $tip -At (New-Object System.Drawing.Point(300, 300))
+    $fgAfter = [Matrise.Native]::GetForegroundWindow()
     $bg = $script:MxPop.BackColor
     Write-MxCheck 'hover opens'  ($script:MxPop.Visible -and $script:MxPop.Width -gt 250) `
         "$($script:MxPop.Width)x$($script:MxPop.Height)px"
@@ -919,8 +977,8 @@ function Invoke-MxSelfTestPhase1 {
         "background $($bg.R),$($bg.G),$($bg.B)"
     Write-MxCheck 'hover anchored' (($script:MxPop.Left -eq 300) -and ($script:MxPop.Top -eq 300)) `
         "sits at $($script:MxPop.Left),$($script:MxPop.Top) - exactly where it was asked to"
-    Write-MxCheck 'keeps focus' ($script:MxForm.ContainsFocus -eq $focusBefore) `
-        "panel did not steal focus (window focus stayed $focusBefore)"
+    Write-MxCheck 'keeps focus' ($fgAfter -eq $fgBefore) `
+        "foreground window unchanged by showing the panel ($fgBefore)"
     Hide-MxPop
     Write-MxCheck 'hover closes' (-not $script:MxPop.Visible) 'gone when the pointer leaves'
 
@@ -1542,9 +1600,21 @@ function Show-MatriseWindow {
     $tbar.Controls.Add($btnCred)
 
     $tstat = New-MxLabel -Text '' -Size 9 -Color $script:MxDim
-    $tstat.SetBounds(592, 10, 420, 20)
+    $tstat.SetBounds(830, 10, 380, 20)
     $script:MxTargetLabel = $tstat
     $tbar.Controls.Add($tstat)
+
+    $btnHome = New-MxButton -Text 'Home setup' -Width 104 -Tip (Get-MatriseTip 'ui.homesetup') -OnClick {
+        Show-MxHomeSetup -Target $script:MxTarget
+    }
+    $btnHome.Location = New-Object System.Drawing.Point(590, 5)
+    $tbar.Controls.Add($btnHome)
+
+    $btnMsg = New-MxButton -Text 'Send message' -Width 118 -Tip (Get-MatriseTip 'ui.sendmsg') -OnClick {
+        Invoke-MxSendMessage
+    }
+    $btnMsg.Location = New-Object System.Drawing.Point(700, 5)
+    $tbar.Controls.Add($btnMsg)
 
     $btnReq = New-MxButton -Text 'Requests' -Width 92 -Tip (Get-MatriseTip 'ui.requests') -OnClick {
         Show-MxRequestsWindow -Policy $script:MxPolicy
@@ -1811,6 +1881,7 @@ function Show-MatriseWindow {
         Update-MxFindColumns
         Update-MxHeadHeight
         Update-MxTargetLabel
+        $script:MxInboxTimer.Start()
         $script:MxLayoutReady = $true
 
         # Land on the command the welcome text points at, rather than making
@@ -1825,6 +1896,12 @@ function Show-MatriseWindow {
         }
         $script:MxTree.Select()
     })
+
+    # Poll our own inbox so a message from the other PC actually surfaces.
+    $inbox = New-Object System.Windows.Forms.Timer
+    $inbox.Interval = 8000
+    $inbox.Add_Tick({ try { Update-MxInbox } catch { } })
+    $script:MxInboxTimer = $inbox
 
     $form.Add_Deactivate({ Hide-MxPop })
     $form.Add_Move({ Hide-MxPop })
@@ -1846,6 +1923,7 @@ function Show-MatriseWindow {
             Stop-MatriseRun -Context $script:MxCtx
         }
         Save-MxLayout
+        if ($script:MxInboxTimer) { $script:MxInboxTimer.Stop() }
         Close-MxHover
         $script:MxTimer.Stop()
         Close-MatriseRun -Context $script:MxCtx

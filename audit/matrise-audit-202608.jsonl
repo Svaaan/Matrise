@@ -1,1 +1,0 @@
-﻿{"timeUtc":"2026-08-21T13:38:21.7505171Z","operator":"DESKTOP-1DP2QP6\\daniel","console":"DESKTOP-1DP2QP6","action":"run","entryId":"net.netstat","entryName":"netstat -abno (raw CMD output)","impact":"read","command":"netstat -abno","target":"localhost","targetMode":"local","policy":"unmanaged (no policy file found)","decision":"allow","rule":"default","note":""}

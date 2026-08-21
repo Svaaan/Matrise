@@ -301,11 +301,9 @@ function Invoke-MatriseAnalysis {
         [void]$findings.Add($f)
     }
 
-    # Always hand back a real array, even when empty, and use the comma
-    # operator so the pipeline does not unroll it. Callers must NOT wrap the
-    # call in @() -- that would re-wrap this into a nested single-element array.
-    $sorted = @($findings | Sort-Object Rank, Line | Select-Object -First $MaxFindings)
-    , $sorted
+    # A plain enumerated array: both "$x = Invoke-..." and "@(Invoke-...)"
+    # then behave. See the note in Agent.ps1 on why the comma form does not.
+    @($findings | Sort-Object Rank, Line | Select-Object -First $MaxFindings)
 }
 
 # Checks that need more than a single regex can express.
@@ -386,7 +384,7 @@ function Get-MatriseStructuredFindings {
         })
     }
 
-    , $out
+    $out.ToArray()
 }
 
 function Format-MatriseFindings {

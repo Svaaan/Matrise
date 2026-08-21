@@ -31,6 +31,35 @@
 # JSON file and inherits the share's ACLs and auditing.
 # ---------------------------------------------------------------------------
 
+# Approvals only mean something where a Security team publishes a policy. On
+# a home machine there is nobody to ask, so say that instead of sending someone
+# hunting for a corporate share that was never meant to exist.
+function Get-MatriseNoStoreMessage {
+    param($Policy)
+    if (-not $Policy -or -not $Policy.IsManaged) {
+        return @(
+            'There is nothing to approve here.',
+            '',
+            'Requests and approvals are for managed workplaces, where a Security team',
+            'publishes a policy saying which commands need sign-off. No policy file is',
+            'loaded, so every command is simply available to you.',
+            '',
+            'If you are helping a family member or a friend, you do not need any of',
+            'this - use Home setup to pair the two PCs, and Send message to talk to',
+            'them.'
+        ) -join "`r`n"
+    }
+    @(
+        "The request store named by the policy is not reachable:",
+        "",
+        "  $($Policy.requestStore)",
+        "",
+        "Policy: $($Policy.policyName)",
+        "You are most likely off the corporate network or VPN. Reconnect and try",
+        "again, or contact $($Policy.contact)."
+    ) -join "`r`n"
+}
+
 function Get-MatriseRequestStore {
     param($Policy)
     if ($Policy -and $Policy.requestStore) { return $Policy.requestStore }
@@ -73,7 +102,7 @@ function New-MatriseRequest {
 
     $store = Get-MatriseRequestStore -Policy $Policy
     if (-not (Test-MatriseStoreReachable $store)) {
-        throw "The request store is not reachable: '$store'. Check the policy file and that you are on the corporate network."
+        throw (Get-MatriseNoStoreMessage -Policy $Policy)
     }
 
     $id = New-MatriseRequestId
@@ -117,7 +146,7 @@ function Get-MatriseRequests {
         if ($User   -and $r.requestedBy -ne $User) { continue }
         [void]$out.Add($r)
     }
-    , $out
+    $out.ToArray()
 }
 
 function Get-MatriseRequest {

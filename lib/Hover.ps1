@@ -13,10 +13,35 @@
 if (-not ('MxPopupForm' -as [type])) {
     Add-Type -ReferencedAssemblies System.Windows.Forms, System.Drawing -TypeDefinition @'
 using System;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 public class MxPopupForm : Form
 {
+    [DllImport("user32.dll")]
+    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
+                                            int X, int Y, int cx, int cy, uint uFlags);
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+    private const int  SW_SHOWNOACTIVATE = 4;
+    private const uint SWP_NOACTIVATE    = 0x0010;
+    private const uint SWP_SHOWWINDOW    = 0x0040;
+
+    // Form.Show() honours ShowWithoutActivation right up until TopMost is set,
+    // at which point WinForms brings the window to the front the activating
+    // way and the caret is stolen out of whatever the user was typing in.
+    // Positioning and showing it by hand is the only reliable way to stay out
+    // of the foreground.
+    public void ShowNoActivate(int x, int y, int w, int h)
+    {
+        IntPtr h0 = this.Handle;               // forces handle creation
+        ShowWindow(h0, SW_SHOWNOACTIVATE);
+        SetWindowPos(h0, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        this.Invalidate();
+    }
+
     // Add-Type warns about a type with no public surface; this also documents
     // why the class exists at all.
     public const string Purpose = "Matrise hover explanation panel";
@@ -87,7 +112,6 @@ function Initialize-MxHover {
     $pop.FormBorderStyle = 'None'
     $pop.ShowInTaskbar   = $false
     $pop.StartPosition   = 'Manual'
-    $pop.TopMost         = $true
     $pop.BackColor       = $script:MxPopBg
     $pop.Visible         = $false
 
@@ -145,9 +169,8 @@ function Show-MxPop {
     if (($y + $sz.Height) -gt $wa.Bottom) { $y = $At.Y - $sz.Height - 22 }  # flip above the item
     $y = [math]::Max($y, ($wa.Top + 4))
 
-    $script:MxPop.Bounds = New-Object System.Drawing.Rectangle $x, $y, $sz.Width, $sz.Height
-    $script:MxPop.Invalidate()
-    if (-not $script:MxPop.Visible) { $script:MxPop.Show() }
+    # Never $pop.Show() - see ShowNoActivate in the C# above.
+    $script:MxPop.ShowNoActivate($x, $y, $sz.Width, $sz.Height)
 }
 
 function Hide-MxPop {

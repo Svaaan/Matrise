@@ -99,12 +99,18 @@ function New-MatriseAgentPrompt {
     $sb.ToString()
 }
 
+# Collection getters return a plain enumerated array, never ", $out".
+# The comma form survives assignment but makes the ordinary idiom
+#     @(Get-Something).Count
+# report 1 no matter what, because the pipeline sees a single object that
+# happens to be an array. Both idioms have to work.
+#
 # Splits a long prompt into paste-sized pieces, each labelled so the model
 # knows to wait for the rest before answering.
 function Split-MatriseForClipboard {
     param([string]$Text, [int]$MaxChars = 45000)
 
-    if ($Text.Length -le $MaxChars) { return , @($Text) }
+    if ($Text.Length -le $MaxChars) { return @(, $Text) }
 
     $chunks = New-Object System.Collections.ArrayList
     $lines  = $Text -split "`r?`n"
@@ -130,7 +136,7 @@ function Split-MatriseForClipboard {
         }
         [void]$out.Add($header + $chunks[$i])
     }
-    , $out
+    $out.ToArray()
 }
 
 # Builds a catalog-shaped entry so an agent run streams through the same
