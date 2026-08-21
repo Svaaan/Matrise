@@ -743,7 +743,11 @@ function Show-MxInputDialog {
 
     $d.AcceptButton = $ok
     $d.CancelButton = $ca
-    $d.Add_Shown({ $tb.Focus(); $tb.SelectAll() })
+    $d.Add_Shown({
+        Hide-MxPop
+        $d.Activate(); $d.BringToFront()
+        $tb.Focus(); $tb.SelectAll()
+    })
 
     $r = $d.ShowDialog($script:MxForm)
     $val = $tb.Text
@@ -1053,6 +1057,33 @@ function Invoke-MxSelfTestPhase1 {
     Hide-MxPop
     Write-MxCheck 'control sweep' ($script:MxCtlErr -eq 0) `
         "$($script:MxCtlOk) controls entered+left, $($script:MxCtlErr) errors$(if ($script:MxCtlMsg) { " - $($script:MxCtlMsg)" })"
+
+    # Home setup has to actually appear, in front, fully on a screen that
+    # exists - a modal dialog nobody can see just looks like the app hung.
+    $script:MxHomeSeen = @{ Visible = $false; Where = 'never opened'; OnScreen = $false }
+    $closer = New-Object System.Windows.Forms.Timer
+    $closer.Interval = 700
+    $closer.Add_Tick({
+        $closer.Stop()
+        foreach ($f in @([System.Windows.Forms.Application]::OpenForms)) {
+            if ($f.Text -like '*house*') {
+                $wa = [System.Windows.Forms.Screen]::FromControl($f).WorkingArea
+                $script:MxHomeSeen.Visible  = $f.Visible
+                $script:MxHomeSeen.Where    = "$($f.Left),$($f.Top) $($f.Width)x$($f.Height)"
+                $script:MxHomeSeen.OnScreen = (($f.Left -ge $wa.Left) -and ($f.Top -ge $wa.Top) -and
+                                               (($f.Left + $f.Width)  -le ($wa.Right  + 1)) -and
+                                               (($f.Top  + $f.Height) -le ($wa.Bottom + 1)))
+                $f.Close()
+            }
+        }
+    })
+    $closer.Start()
+    try { Show-MxHomeSetup -Target $script:MxTarget } catch { $script:MxHomeSeen.Where = $_.Exception.Message }
+    Write-MxCheck 'home setup' ($script:MxHomeSeen.Visible -and $script:MxHomeSeen.OnScreen) `
+        "opened at $($script:MxHomeSeen.Where), fully on screen"
+
+    $pairPath = Join-Path $script:MxWorkDir 'Enable-MatriseHelp.ps1'
+    Write-MxCheck 'pair script' (Test-Path $pairPath) 'written next to the app, not buried in reports'
 
     # And the target bar actions that do not need a real machine.
     try {

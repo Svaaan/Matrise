@@ -246,7 +246,7 @@ share.
 What you do need is for the two machines to be introduced to each other once.
 **Home setup** walks both halves:
 
-**On their PC** — they run one script, as Administrator. It sets the network
+**On their PC** — they run one script, as Administrator. Home setup writes it as `Enable-MatriseHelp.ps1` next to the app and there is a button to copy its text. It sets the network
 profile to Private (remote help is blocked on Public, which is correct
 behaviour in a café), turns on Windows remote management, and prints the
 computer name and username you'll need. The undo command is at the bottom of
@@ -445,7 +445,7 @@ powershell -ExecutionPolicy Bypass -File Matrise.ps1 -SelfTest
 
 Builds the real window, loads a synthetic "infected machine" fixture, runs the
 analyzer, exercises find/filter/jump, then runs a real command end to end and
-checks the output landed. Thirty-two checks, PASS/FAIL each — including one that
+checks the output landed. Thirty-four checks, PASS/FAIL each — including one that
 fails if any command is missing its hover explanation.
 
 `tests\sample-compromised.txt` is that fixture — fake output from a deliberately

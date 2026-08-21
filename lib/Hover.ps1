@@ -229,6 +229,9 @@ function Register-MxHover {
         $p = $sender.PointToScreen((New-Object System.Drawing.Point(0, ($sender.Height + 5))))
         Request-MxPop -Text $t -At $p
     })
+    # Also on click: the panel is topmost and click-through, so without this it
+    # keeps floating over whatever the click just opened.
+    $Control.Add_Click({ Hide-MxPop })
     $Control.Add_MouseLeave({ Hide-MxPop })
 }
 
@@ -251,6 +254,7 @@ function Register-MxHoverItem {
         $p = $owner.PointToScreen((New-Object System.Drawing.Point($sender.Bounds.Left, $sender.Bounds.Top)))
         Request-MxPop -Text $t -At $p
     })
+    $Item.Add_Click({ Hide-MxPop })
     $Item.Add_MouseLeave({ Hide-MxPop })
 }
 

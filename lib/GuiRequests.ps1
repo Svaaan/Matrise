@@ -8,6 +8,20 @@
 # theatre. Whether they work is decided by the ACL on the grant folder, and if
 # it says no, the error says so plainly.
 
+# A modal dialog can still end up behind, or centred on a monitor that is no
+# longer there. Pull it to the front and clamp it to a real screen.
+function Show-MxDialogFront {
+    param($Dialog)
+    try {
+        $scr = [System.Windows.Forms.Screen]::FromControl($script:MxForm).WorkingArea
+        $x = [math]::Max($scr.Left + 8, [math]::Min($Dialog.Left, $scr.Right  - $Dialog.Width  - 8))
+        $y = [math]::Max($scr.Top  + 8, [math]::Min($Dialog.Top,  $scr.Bottom - $Dialog.Height - 8))
+        $Dialog.Location = New-Object System.Drawing.Point($x, $y)
+    } catch { }
+    $Dialog.Activate()
+    $Dialog.BringToFront()
+}
+
 function New-MxDlgButton {
     param([string]$Text, [int]$W = 110, $Dialog = $null, [string]$Result = '')
     $b = New-Object System.Windows.Forms.Button
@@ -128,6 +142,7 @@ function Show-MxPolicyStop {
         $d.Controls.Add($send)
     }
 
+    $d.Add_Shown({ Hide-MxPop; Show-MxDialogFront -Dialog $d })
     [void]$d.ShowDialog($script:MxForm)
     $d.Dispose()
 }
@@ -171,9 +186,18 @@ function Show-MxHomeSetup {
     $s1d.SetBounds(16, 104, 720, 46)
     $d.Controls.Add($s1d)
 
-    $script:MxPairFile = Join-Path $script:MxWorkDir 'reports\Enable-MatriseHelp.ps1'
-    New-Item -ItemType Directory -Path (Split-Path $script:MxPairFile) -Force -ErrorAction SilentlyContinue | Out-Null
+    # Next to the app, not in reports\ - that folder is command output, and a
+    # file appearing there looks like stray junk rather than the thing you are
+    # meant to send someone.
+    $script:MxPairFile = Join-Path $script:MxWorkDir 'Enable-MatriseHelp.ps1'
     [void](New-MatrisePairingScript -HelperPc $env:COMPUTERNAME -OutFile $script:MxPairFile)
+
+    # Leave a trace on the board, so it is obvious what happened even if the
+    # dialog opens on another monitor and gets missed.
+    Add-MxBoardLine ''
+    Add-MxBoardLine '*** Home setup opened. ***'
+    Add-MxBoardLine "    The script for the other PC: $script:MxPairFile"
+    Update-MxBoardFlush
 
     $pathBox = New-MxDlgText -X 16 -Y 156 -W 560 -H 26 -Text $script:MxPairFile -ReadOnly $true
     $d.Controls.Add($pathBox)
@@ -251,6 +275,11 @@ function Show-MxHomeSetup {
     $ok.Anchor = 'Bottom, Right'
     $d.Controls.Add($ok)
     $d.CancelButton = $ok
+
+    $d.Add_Shown({
+        Hide-MxPop
+        Show-MxDialogFront -Dialog $d
+    })
 
     [void]$d.ShowDialog($script:MxForm)
     $d.Dispose()
@@ -426,6 +455,8 @@ function Show-MxRequestsWindow {
     $poll.Add_Tick($reload)
 
     $f.Add_Shown({
+        Hide-MxPop
+        Show-MxDialogFront -Dialog $f
         try { $split.SplitterDistance = 540; $split.Panel1MinSize = 320; $split.Panel2MinSize = 380 } catch { }
         & $reload
         $poll.Start()
