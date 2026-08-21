@@ -225,11 +225,37 @@ function New-MatrisePairingScript {
 
 # The other half, run on the helping PC. Needs admin because TrustedHosts is a
 # machine-wide setting.
+# Reading WSMan:\ when the WinRM service is stopped does not fail fast - it sits
+# there trying to reach a service that is not listening, and takes the whole UI
+# thread down with it. Ask the service control manager first; that answers in
+# milliseconds and never blocks.
+function Test-MatriseWinRmRunning {
+    try { return ((Get-Service WinRM -ErrorAction Stop).Status -eq 'Running') } catch { return $false }
+}
+
 function Add-MatriseTrustedHost {
     param([Parameter(Mandatory)] [string]$Name)
 
     if (-not (Test-MatriseElevated)) {
         throw "Adding '$Name' to TrustedHosts needs Administrator. Restart Matrise with Matrise.bat and try again."
+    }
+
+    $started = ''
+    if (-not (Test-MatriseWinRmRunning)) {
+        # The trusted list lives in WinRM's own configuration, so the service
+        # has to be running to edit it. This is the client half only - it does
+        # not open a listener or let anything connect to this PC.
+        try {
+            Start-Service WinRM -ErrorAction Stop
+            Set-Service WinRM -StartupType Automatic -ErrorAction SilentlyContinue
+            $started = "Started the Windows Remote Management service on this PC (client side only - nothing can connect in). "
+        }
+        catch {
+            throw ("The Windows Remote Management service could not be started, so the trusted list cannot be edited.`
+`n`
+`n" +
+                   $_.Exception.Message)
+        }
     }
 
     $path = 'WSMan:\localhost\Client\TrustedHosts'
@@ -242,9 +268,12 @@ function Add-MatriseTrustedHost {
     # Never widen this to '*'. Adding one name at a time is the whole point.
     $new = (@($have) + $Name) -join ','
     Set-Item $path -Value $new -Force
-    "Added '$Name'. TrustedHosts is now: $new"
+    "$started" + "Added '$Name'. TrustedHosts is now: $new"
 }
 
+# Returns $null when the answer is genuinely unknown (service stopped), so the
+# caller can say so instead of showing a misleading "(none)".
 function Get-MatriseTrustedHosts {
+    if (-not (Test-MatriseWinRmRunning)) { return $null }
     try { (Get-Item 'WSMan:\localhost\Client\TrustedHosts' -ErrorAction Stop).Value } catch { '' }
 }

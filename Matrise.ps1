@@ -217,12 +217,23 @@ try {
 }
 catch {
     $msg = "Matrise failed to start.`r`n`r`n$($_.Exception.Message)`r`n`r`n$($_.ScriptStackTrace)"
+
+    # Print it first, always. A modal dialog in a hidden window waits forever
+    # for a click nobody can give, which turns a clear error into a hang.
+    Write-Host $msg -ForegroundColor Red
     try {
-        Add-Type -AssemblyName System.Windows.Forms
-        [void][System.Windows.Forms.MessageBox]::Show($msg, 'Matrise - startup error',
-            [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
-    } catch {
-        Write-Host $msg -ForegroundColor Red
+        $logDir = Join-Path $root 'audit'
+        New-Item -ItemType Directory -Path $logDir -Force -ErrorAction SilentlyContinue | Out-Null
+        Add-Content -Path (Join-Path $logDir 'startup-errors.log') `
+            -Value ("=== $((Get-Date).ToString('o')) ===`r`n$msg`r`n") -Encoding UTF8 -ErrorAction SilentlyContinue
+    } catch { }
+
+    if (-not $SelfTest) {
+        try {
+            Add-Type -AssemblyName System.Windows.Forms
+            [void][System.Windows.Forms.MessageBox]::Show($msg, 'Matrise - startup error',
+                [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        } catch { }
     }
     exit 1
 }

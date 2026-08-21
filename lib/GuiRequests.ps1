@@ -240,16 +240,26 @@ function Show-MxHomeSetup {
     $btnTrust.SetBounds(324, 308, 180, 30)
     $d.Controls.Add($btnTrust)
 
-    $trustNow = New-MxDlgText -X 16 -Y 348 -W 728 -H 60 -ReadOnly $true `
-        -Text ("Currently trusted: " + $(if (Get-MatriseTrustedHosts) { Get-MatriseTrustedHosts } else { '(none)' }))
+    # Called once. It used to be called twice on this line, which doubled the
+    # wait when WinRM was stopped.
+    $trusted = Get-MatriseTrustedHosts
+    $trustNow = New-MxDlgText -X 16 -Y 348 -W 728 -H 60 -ReadOnly $true -Text $(
+        if ($null -eq $trusted) {
+            'Windows Remote Management is not running on this PC yet, so the trusted list cannot be read. ' +
+            'Press "Trust this computer" and Matrise will start it for you.'
+        } elseif ($trusted) { "Currently trusted: $trusted" }
+        else { 'Currently trusted: (none)' })
     $d.Controls.Add($trustNow)
 
     $btnTrust.Add_Click({
         $n = $nameBox.Text.Trim()
         if (-not $n) { return }
+        $trustNow.Text = "Working on $n ..."
+        $d.Refresh()
         try {
             $msg = Add-MatriseTrustedHost -Name $n
-            $trustNow.Text = "$msg`r`n`r`nCurrently trusted: " + (Get-MatriseTrustedHosts)
+            $now = Get-MatriseTrustedHosts
+            $trustNow.Text = "$msg" + $(if ($null -ne $now) { "`r`n`r`nCurrently trusted: $now" } else { '' })
         } catch {
             $trustNow.Text = $_.Exception.Message
         }

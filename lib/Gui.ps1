@@ -62,6 +62,9 @@ $script:MxPolicy     = $null
 $script:MxTarget     = $null
 $script:MxReqCurrent = $null
 $script:MxInboxTimer = $null
+$script:MxBgTask     = $null
+$script:MxBgTimer    = $null
+$script:MxSelfTesting = $false
 $script:MxPairFile  = ''
 $script:MxLayoutReady = $false
 
@@ -795,6 +798,9 @@ function Register-MxUiErrorHandler {
 
         try { Hide-MxPop } catch { }
 
+        # Never block on a click during a scripted run - there is nobody there.
+        if ($script:MxSelfTesting) { return }
+
         [void][System.Windows.Forms.MessageBox]::Show(
             ("Something in the window went wrong. Matrise is still running and " +
              "nothing you have collected is lost.`r`n`r`n" +
@@ -824,6 +830,60 @@ function Update-MxTargetLabel {
 
 # One action, two deliveries: a box on their screen now (which works whether or
 # not they have Matrise open), and a copy in their Matrise inbox for the record.
+# Anything that touches the network runs here, never on the UI thread.
+#
+# A DNS lookup, a TCP connect and a WinRM handshake can add up to tens of
+# seconds against a machine that is off. Windows paints an app "Not Responding"
+# after about five of them, so doing this inline makes a working check look like
+# a crash. Commands already ran in a runspace; connection tests and messages had
+# no business being different.
+function Start-MxBackground {
+    param(
+        [scriptblock]$Work,
+        $Arguments = @(),
+        [string]$Label = 'working',
+        [scriptblock]$OnDone = $null,
+        [int]$TimeoutSec = 90
+    )
+
+    if ($script:MxBgTask -and -not $script:MxBgTask.State['Done']) {
+        $script:MxStatus.Text = "still $($script:MxBgTask.Label) - wait for that to finish"
+        return $false
+    }
+
+    $q     = [System.Collections.Queue]::Synchronized((New-Object System.Collections.Queue))
+    $state = [hashtable]::Synchronized(@{ Done = $false })
+
+    # CreateDefault, not CreateDefault2: the worker needs the WSMan and
+    # networking modules to be auto-loadable.
+    $iss = [initialsessionstate]::CreateDefault()
+    $rs  = [runspacefactory]::CreateRunspace($iss)
+    $rs.ApartmentState = 'MTA'
+    $rs.ThreadOptions  = 'ReuseThread'
+    $rs.Open()
+
+    $ps = [powershell]::Create()
+    $ps.Runspace = $rs
+    [void]$ps.AddScript($Work)
+    [void]$ps.AddArgument($q)
+    [void]$ps.AddArgument($state)
+    foreach ($a in $Arguments) { [void]$ps.AddArgument($a) }
+
+    $script:MxBgTask = [pscustomobject]@{
+        Queue    = $q
+        State    = $state
+        Ps       = $ps
+        Rs       = $rs
+        Handle   = $ps.BeginInvoke()
+        OnDone   = $OnDone
+        Label    = $Label
+        Deadline = (Get-Date).AddSeconds($TimeoutSec)
+    }
+    $script:MxStatus.Text = "$Label ..."
+    $script:MxBgTimer.Start()
+    $true
+}
+
 function Invoke-MxSendMessage {
     $to = Get-MatriseTargetLabel -Target $script:MxTarget
     $text = Show-MxInputDialog -Title 'Send a message' `
@@ -832,27 +892,30 @@ function Invoke-MxSendMessage {
                    "Matrise cannot send anonymously.") -Default ''
     if ($null -eq $text -or -not $text.Trim()) { $script:MxStatus.Text = 'cancelled'; return }
 
-    $script:MxForm.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
-    try {
-        $how = Send-MatriseScreenAlert -Target $script:MxTarget -Text $text.Trim()
-        try { Send-MatrisePeerMessage -Target $script:MxTarget -Text $text.Trim() | Out-Null } catch { }
-        Add-MxBoardLine ''
-        Add-MxBoardLine "*** Message sent to $to (delivered by: $how) ***"
-        Add-MxBoardLine "    $($text.Trim())"
-        Update-MxBoardFlush
-        $script:MxStatus.Text = "message sent to $to"
+    $work = {
+        param($queue, $state, $libDir, $target, $body, $to)
+        try {
+            . (Join-Path $libDir 'Runner.ps1')
+            . (Join-Path $libDir 'Target.ps1')
+            . (Join-Path $libDir 'Peer.ps1')
+            $how = Send-MatriseScreenAlert -Target $target -Text $body
+            try { Send-MatrisePeerMessage -Target $target -Text $body | Out-Null } catch { }
+            $queue.Enqueue('')
+            $queue.Enqueue("*** Message sent to $to (delivered by: $how) ***")
+            foreach ($l in ($body -split "`r?`n")) { $queue.Enqueue("    $l") }
+        }
+        catch {
+            $queue.Enqueue('')
+            $queue.Enqueue('*** Could not deliver the message ***')
+            $queue.Enqueue("    $($_.Exception.Message)")
+            $queue.Enqueue('    If the two PCs are not paired yet, use Home setup first.')
+        }
+        finally { $state['Done'] = $true }
     }
-    catch {
-        Add-MxBoardLine ''
-        Add-MxBoardLine "*** Could not send the message ***"
-        Add-MxBoardLine "    $($_.Exception.Message)"
-        Update-MxBoardFlush
-        [void][System.Windows.Forms.MessageBox]::Show(
-            ("Could not deliver the message.`r`n`r`n$($_.Exception.Message)`r`n`r`n" +
-             'If the two PCs are not paired yet, use Home setup first.'),
-            'Matrise', 'OK', 'Warning')
-    }
-    finally { $script:MxForm.Cursor = [System.Windows.Forms.Cursors]::Default }
+
+    [void](Start-MxBackground -Work $work -Label "sending to $to" -TimeoutSec 90 `
+        -Arguments @((Join-Path $script:MxWorkDir 'lib'), $script:MxTarget, $text.Trim(), $to) `
+        -OnDone { $script:MxStatus.Text = 'message finished - see the board' })
 }
 
 # Anything addressed to this machine, shown as it arrives.
@@ -885,18 +948,31 @@ function Invoke-MxTestTarget {
         return
     }
 
-    $script:MxStatus.Text = "checking $name ..."
-    $script:MxForm.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
-    try {
-        $report = Test-MatriseTarget -Target $script:MxTarget
-        Add-MxBoardText (Format-MatriseTargetReport -Report $report -Target $script:MxTarget)
-        Update-MxBoardFlush
+    $work = {
+        param($queue, $state, $libDir, $target, $tcpTimeout)
+        try {
+            . (Join-Path $libDir 'Runner.ps1')
+            . (Join-Path $libDir 'Target.ps1')
+            $report = Test-MatriseTarget -Target $target -TimeoutSec $tcpTimeout
+            foreach ($l in ((Format-MatriseTargetReport -Report $report -Target $target) -split "`r?`n")) {
+                $queue.Enqueue($l)
+            }
+        }
+        catch {
+            $queue.Enqueue('')
+            $queue.Enqueue("*** connection check failed: $($_.Exception.Message) ***")
+        }
+        finally { $state['Done'] = $true }
     }
-    finally {
-        $script:MxForm.Cursor = [System.Windows.Forms.Cursors]::Default
-    }
-    Update-MxTargetLabel
-    $script:MxStatus.Text = "connection check: $($script:MxTarget.Status)"
+
+    # The target object crosses into the runspace by reference, so the status
+    # written over there is the status read back here.
+    [void](Start-MxBackground -Work $work -Label "checking $name" -TimeoutSec 60 `
+        -Arguments @((Join-Path $script:MxWorkDir 'lib'), $script:MxTarget, 6) `
+        -OnDone {
+            Update-MxTargetLabel
+            $script:MxStatus.Text = "connection check: $($script:MxTarget.Status)"
+        })
 }
 
 function Get-MxNodeExplain {
@@ -1095,6 +1171,37 @@ function Invoke-MxSelfTestPhase1 {
     catch {
         Write-MxCheck 'target actions' $false $_.Exception.Message
     }
+
+    # Reading the trusted list must never sit on the UI thread waiting for a
+    # service that is not running. Home setup opens with this.
+    $swT = [System.Diagnostics.Stopwatch]::StartNew()
+    $null = Get-MatriseTrustedHosts
+    $swT.Stop()
+    Write-MxCheck 'trusted list' ($swT.ElapsedMilliseconds -lt 2000) `
+        "read in $($swT.ElapsedMilliseconds)ms (WinRM is $((Get-Service WinRM -ErrorAction SilentlyContinue).Status))"
+
+    # The one that matters: pressing Test connection against a machine that
+    # does not answer must hand straight back to the message loop. Doing this
+    # inline is what made the window say "Not Responding".
+    $script:MxTargetBox.Text = 'matrise-nosuchhost-selftest'
+    $swC = [System.Diagnostics.Stopwatch]::StartNew()
+    Invoke-MxTestTarget
+    $swC.Stop()
+    Write-MxCheck 'connect is async' ($swC.ElapsedMilliseconds -lt 900) `
+        "Test connection returned in $($swC.ElapsedMilliseconds)ms - the window stays live while it works"
+
+    # Let it finish so the runspace is not left dangling, pumping messages the
+    # way a live window does.
+    $spin = 0
+    while ($script:MxBgTask -and $spin -lt 200) {
+        [System.Windows.Forms.Application]::DoEvents()
+        Start-Sleep -Milliseconds 100
+        $spin++
+    }
+    Write-MxCheck 'connect finishes' (-not $script:MxBgTask) "background check cleaned up after $([math]::Round($spin/10,1))s"
+    $script:MxTargetBox.Text = ''
+    $script:MxTarget = New-MatriseTarget
+    Update-MxTargetLabel
 
     # ---- enterprise layer -------------------------------------------------
     $allCat  = Get-MatriseCatalog
@@ -1928,6 +2035,36 @@ function Show-MatriseWindow {
         $script:MxTree.Select()
     })
 
+    # Drains whatever the background task is producing, and enforces its
+    # deadline so a wedged network call cannot pin the button forever.
+    $bgTimer = New-Object System.Windows.Forms.Timer
+    $bgTimer.Interval = 150
+    $bgTimer.Add_Tick({
+        $bg = $script:MxBgTask
+        if (-not $bg) { $script:MxBgTimer.Stop(); return }
+
+        while ($bg.Queue.Count -gt 0) { Add-MxBoardLine ([string]$bg.Queue.Dequeue()) }
+        Update-MxBoardFlush
+
+        if ((-not $bg.State['Done']) -and ((Get-Date) -gt $bg.Deadline)) {
+            try { $bg.Ps.Stop() } catch { }
+            $bg.State['Done'] = $true
+            Add-MxBoardLine ''
+            Add-MxBoardLine "*** $($bg.Label): gave up waiting ***"
+            Add-MxBoardLine '    The machine did not answer. It may be off, asleep, or on another network.'
+            Update-MxBoardFlush
+        }
+
+        if ($bg.State['Done'] -and $bg.Queue.Count -eq 0) {
+            $script:MxBgTimer.Stop()
+            try { $bg.Ps.Dispose() } catch { }
+            try { $bg.Rs.Close(); $bg.Rs.Dispose() } catch { }
+            $script:MxBgTask = $null
+            if ($bg.OnDone) { & $bg.OnDone }
+        }
+    })
+    $script:MxBgTimer = $bgTimer
+
     # Poll our own inbox so a message from the other PC actually surfaces.
     $inbox = New-Object System.Windows.Forms.Timer
     $inbox.Interval = 8000
@@ -1955,6 +2092,8 @@ function Show-MatriseWindow {
         }
         Save-MxLayout
         if ($script:MxInboxTimer) { $script:MxInboxTimer.Stop() }
+        if ($script:MxBgTimer) { $script:MxBgTimer.Stop() }
+        if ($script:MxBgTask) { try { $script:MxBgTask.Ps.Stop() } catch { } }
         Close-MxHover
         $script:MxTimer.Stop()
         Close-MatriseRun -Context $script:MxCtx
@@ -1993,6 +2132,7 @@ function Show-MatriseWindow {
     Update-MxBoardFlush
 
     if ($SelfTestMs -gt 0) {
+        $script:MxSelfTesting = $true
         $script:MxSelfFail = 0
         $st = New-Object System.Windows.Forms.Timer
         $st.Interval = $SelfTestMs
