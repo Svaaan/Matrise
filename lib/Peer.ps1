@@ -236,6 +236,19 @@ function Test-MatriseWinRmRunning {
 function Add-MatriseTrustedHost {
     param([Parameter(Mandatory)] [string]$Name)
 
+    # TrustedHosts is compared as TEXT against whatever you type as the target.
+    # A name here does not cover that machine's IP, and an IP does not cover its
+    # name, so accept several at once and let people add both.
+    $wanted = @($Name -split '[,;\s]+' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+
+    foreach ($w in $wanted) {
+        if ($w -eq '*' -or $w.Contains('*')) {
+            throw ("'*' would tell Windows to send your password to ANY machine that answers, " +
+                   "including one pretending to be hers. Add the specific computer name or IP instead.")
+        }
+    }
+    if (-not $wanted) { throw 'Nothing to add.' }
+
     if (-not (Test-MatriseElevated)) {
         throw "Adding '$Name' to TrustedHosts needs Administrator. Restart Matrise with Matrise.bat and try again."
     }
@@ -262,13 +275,21 @@ function Add-MatriseTrustedHost {
     $current = ''
     try { $current = (Get-Item $path -ErrorAction Stop).Value } catch { }
 
-    $have = @($current -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-    if ($have -contains $Name) { return "'$Name' was already trusted. Nothing changed." }
+    $have  = @($current -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $added = @()
+    $dup   = @()
+    foreach ($w in $wanted) {
+        if ($have -contains $w) { $dup += $w } else { $have += $w; $added += $w }
+    }
 
-    # Never widen this to '*'. Adding one name at a time is the whole point.
-    $new = (@($have) + $Name) -join ','
+    if (-not $added) { return "Already trusted: $($dup -join ', '). Nothing changed." }
+
+    $new = ($have -join ',')
     Set-Item $path -Value $new -Force
-    "$started" + "Added '$Name'. TrustedHosts is now: $new"
+
+    $msg = "$started" + "Added $($added -join ', ')."
+    if ($dup) { $msg += " (already there: $($dup -join ', '))" }
+    "$msg`r`n`r`nTrustedHosts is now: $new"
 }
 
 # Returns $null when the answer is genuinely unknown (service stopped), so the

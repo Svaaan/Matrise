@@ -159,8 +159,8 @@ function Show-MxHomeSetup {
     $d = New-Object System.Windows.Forms.Form
     $d.Text = 'Matrise - help another PC in this house'
     $d.StartPosition = 'CenterParent'
-    $d.ClientSize = New-Object System.Drawing.Size(760, 620)
-    $d.MinimumSize = New-Object System.Drawing.Size(680, 520)
+    $d.ClientSize = New-Object System.Drawing.Size(760, 700)
+    $d.MinimumSize = New-Object System.Drawing.Size(680, 600)
     $d.BackColor = $script:MxBg; $d.ForeColor = $script:MxFg
 
     $title = New-MxLabel -Text 'Two steps, one on each PC' -Size 12 -Bold $true
@@ -226,24 +226,37 @@ function Show-MxHomeSetup {
     $d.Controls.Add($s2)
 
     $s2d = New-MxLabel -Text (@(
-        'Windows will not send your password to an untrusted machine, so their computer',
-        'name has to be added to this one''s trusted list. One name at a time - never *.',
-        'This needs Matrise running as Administrator.'
+        'Windows will not send your password to a machine it does not trust, so hers has to',
+        'be added to this PC''s trusted list. Whatever you put here must match exactly what',
+        'you later type in the Machine box - the list is compared as text, never resolved.',
+        'So a name does not cover her IP, and an IP does not cover her name.'
     ) -join "`r`n") -Size 9 -Color $script:MxDim
-    $s2d.SetBounds(16, 258, 720, 46)
+    $s2d.SetBounds(16, 254, 728, 60)
     $d.Controls.Add($s2d)
 
-    $nameBox = New-MxDlgText -X 16 -Y 310 -W 300 -H 26 -Text $name
+    $s2e = New-MxLabel -Text (@(
+        'Use the COMPUTER NAME her script printed. Home IP addresses come from the router',
+        'and change; the name does not. You can paste both, separated by a comma, and use',
+        'whichever connects. Never *. Needs Matrise running as Administrator.'
+    ) -join "`r`n") -Size 9 -Color $script:MxFg
+    $s2e.SetBounds(16, 316, 728, 48)
+    $d.Controls.Add($s2e)
+
+    $nameLbl = New-MxLabel -Text 'Her computer name  (or name, IP)' -Size 9 -Color $script:MxDim
+    $nameLbl.SetBounds(16, 368, 300, 18)
+    $d.Controls.Add($nameLbl)
+
+    $nameBox = New-MxDlgText -X 16 -Y 388 -W 300 -H 26 -Text $name
     $d.Controls.Add($nameBox)
 
     $btnTrust = New-MxDlgButton -Text 'Trust this computer' -W 180
-    $btnTrust.SetBounds(324, 308, 180, 30)
+    $btnTrust.SetBounds(324, 386, 180, 30)
     $d.Controls.Add($btnTrust)
 
     # Called once. It used to be called twice on this line, which doubled the
     # wait when WinRM was stopped.
     $trusted = Get-MatriseTrustedHosts
-    $trustNow = New-MxDlgText -X 16 -Y 348 -W 728 -H 60 -ReadOnly $true -Text $(
+    $trustNow = New-MxDlgText -X 16 -Y 424 -W 728 -H 56 -ReadOnly $true -Text $(
         if ($null -eq $trusted) {
             'Windows Remote Management is not running on this PC yet, so the trusted list cannot be read. ' +
             'Press "Trust this computer" and Matrise will start it for you.'
@@ -266,7 +279,7 @@ function Show-MxHomeSetup {
     })
 
     $s3 = New-MxLabel -Text 'STEP 3 - connect' -Size 10 -Bold $true -Color $script:MxAccent
-    $s3.SetBounds(16, 420, 500, 20)
+    $s3.SetBounds(16, 492, 500, 20)
     $d.Controls.Add($s3)
 
     $s3d = New-MxLabel -Text (@(
@@ -277,11 +290,11 @@ function Show-MxHomeSetup {
         'address and the password is the one they type at startup - not a PIN. A PIN only',
         'works on the machine itself and cannot be used over the network.'
     ) -join "`r`n") -Size 9 -Color $script:MxFg
-    $s3d.SetBounds(16, 442, 728, 100)
+    $s3d.SetBounds(16, 514, 728, 100)
     $d.Controls.Add($s3d)
 
     $ok = New-MxDlgButton -Text 'Close' -W 110 -Result 'Cancel'
-    $ok.SetBounds(628, 560, 110, 30)
+    $ok.SetBounds(628, 640, 110, 30)
     $ok.Anchor = 'Bottom, Right'
     $d.Controls.Add($ok)
     $d.CancelButton = $ok
