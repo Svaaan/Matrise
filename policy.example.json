@@ -1,0 +1,68 @@
+{
+  "_comment": [
+    "Matrise policy - example for an AD-managed estate.",
+    "",
+    "Copy to policy.json next to the app, or publish it on a read-only share and",
+    "point the MATRISE_POLICY environment variable at it (deploy that variable",
+    "with the app through Software Center / Intune).",
+    "",
+    "This file governs what the CONSOLE offers. It is not a security boundary on",
+    "its own - anyone who can run PowerShell can ignore it. Generate the JEA",
+    "endpoint from this same file so the endpoint enforces the same list:",
+    "    .\\Matrise.ps1 -ExportJea .\\out",
+    "",
+    "Rule matching, most specific first: id > pattern > group/section > impact.",
+    "Actions: allow | requireApproval | block"
+  ],
+
+  "version": 1,
+  "policyName": "Corp IT Support baseline v1",
+  "contact": "secops@corp.example.com",
+  "defaultAction": "allow",
+
+  "requestStore": "\\\\corp.example.com\\dfs\\matrise\\requests",
+  "grantStore":   "\\\\corp.example.com\\dfs\\matrise\\grants",
+  "auditLog":     "\\\\corp.example.com\\dfs\\matrise\\audit",
+
+  "jeaSupportGroup":  "CORP\\IT-Support-Endpoint",
+  "jeaElevatedGroup": "CORP\\IT-Support-Endpoint-Elevated",
+
+  "rules": [
+    {
+      "match": "pattern",
+      "value": "netsh\\s+winsock\\s+reset|netsh\\s+int\\s+ip\\s+reset",
+      "action": "block",
+      "reason": "Rebuilds the network stack and needs a reboot. Run remotely, it drops the very connection you are working over and leaves the machine unreachable until someone walks to it. Deskside only."
+    },
+    {
+      "match": "id",
+      "value": "sec.quarantine",
+      "action": "block",
+      "reason": "Moving a suspected binary destroys the evidence DFIR needs and tips off anything watching. Isolate the machine and hand it to the IR team instead."
+    },
+    {
+      "match": "id",
+      "value": "pcfix.chkdsk",
+      "action": "requireApproval",
+      "reason": "Schedules an offline disk check. The machine is unusable for hours on next boot, so the user needs warning first."
+    },
+    {
+      "match": "id",
+      "value": "sec.harden",
+      "action": "requireApproval",
+      "reason": "Changes the security posture of a managed endpoint. Those settings come from GPO here, so this either fights policy or hides a GPO that is not applying."
+    },
+    {
+      "match": "id",
+      "value": "netfix.hosts",
+      "action": "requireApproval",
+      "reason": "Overwrites the HOSTS file. Some line-of-business apps still depend on entries there."
+    },
+    {
+      "match": "impact",
+      "value": "heavy",
+      "action": "requireApproval",
+      "reason": "Long-running or reboot-required. Fine to run, but the user should be told before it starts."
+    }
+  ]
+}

@@ -132,11 +132,101 @@ $script:MatriseWorker = {
     }
 }
 
+# Remote execution goes through PowerShell Remoting from inside the worker
+# runspace rather than by spawning a child process. That keeps the credential
+# as a live PSCredential object - it is never written to a temp file, never
+# appears on a command line, and never lands in a process listing.
+$script:MatriseRemoteWorker = {
+    param($shell, $command, $queue, $state, $timeoutSec, $targetName, $credential, $useSsl, $configName)
+
+    function Emit($line) { $queue.Enqueue($line) }
+
+    try {
+        $state['Running'] = $true
+
+        $icm = @{
+            ComputerName = $targetName
+            ErrorAction  = 'Stop'
+        }
+        if ($credential) { $icm['Credential'] = $credential }
+        if ($useSsl)     { $icm['UseSSL'] = $true }
+        if ($configName) { $icm['ConfigurationName'] = $configName }
+
+        if ($shell -eq 'cmd') {
+            $icm['ScriptBlock'] = {
+                param($c)
+                & "$env:SystemRoot\System32\cmd.exe" /d /c $c 2>&1
+            }
+            $icm['ArgumentList'] = @($command)
+        }
+        else {
+            # Built on the far side so the body runs as a script, not as text
+            # pasted into another string.
+            $icm['ScriptBlock'] = {
+                param($body)
+                $ErrorActionPreference = 'Continue'
+                $ProgressPreference = 'SilentlyContinue'
+                $FormatEnumerationLimit = -1
+                & ([scriptblock]::Create($body)) 2>&1
+            }
+            $icm['ArgumentList'] = @($command)
+        }
+
+        Emit "Connecting to $targetName ..."
+        $deadline = (Get-Date).AddSeconds($timeoutSec)
+
+        Invoke-Command @icm | ForEach-Object {
+            if ($null -ne $_) {
+                foreach ($l in (($_ | Out-String -Width 400) -split "`r?`n")) { Emit $l }
+            }
+            if ($state['Cancelled']) { throw 'cancelled-by-user' }
+            if ((Get-Date) -gt $deadline) { throw "timed-out-after-$timeoutSec-seconds" }
+        }
+
+        $state['ExitCode'] = 0
+    }
+    catch {
+        $m = $_.Exception.Message
+        Emit ''
+        if ($m -eq 'cancelled-by-user') {
+            Emit '*** STOPPED BY USER ***'
+        }
+        elseif ($m -like 'timed-out-*') {
+            Emit "*** TIMED OUT after $timeoutSec seconds ***"
+        }
+        else {
+            Emit "*** REMOTE EXECUTION FAILED ***"
+            Emit $m
+            Emit ''
+            if ($m -match 'Access is denied') {
+                Emit 'Your account is not permitted to run commands on that machine.'
+                Emit 'In a managed estate that permission comes from an AD group, not'
+                Emit 'from a local account. Ask for the endpoint support group.'
+            }
+            elseif ($m -match 'cannot find the computer|WinRM|not resolve') {
+                Emit 'The machine did not answer on WinRM. Use "Test connection" for a'
+                Emit 'step by step check of DNS, the port and authentication.'
+            }
+            elseif ($m -match 'not recognized|CommandNotFound') {
+                Emit 'The endpoint accepted the connection but refused the command.'
+                Emit 'If you are connecting to a constrained (JEA) endpoint, that is it'
+                Emit 'working as intended: the command is not on the approved list.'
+            }
+        }
+        $state['ExitCode'] = -1
+    }
+    finally {
+        $state['Running'] = $false
+        $state['Done']    = $true
+    }
+}
+
 function Start-MatriseRun {
     param(
         [Parameter(Mandatory)] $Context,
         [Parameter(Mandatory)] $Entry,
-        [string]$WorkDir
+        [string]$WorkDir,
+        $Target = $null
     )
 
     $Context.State['Running']   = $false
@@ -154,13 +244,28 @@ function Start-MatriseRun {
 
     $ps = [powershell]::Create()
     $ps.Runspace = $rs
-    [void]$ps.AddScript($script:MatriseWorker)
-    [void]$ps.AddArgument($Entry.Shell)
-    [void]$ps.AddArgument($Entry.Command)
-    [void]$ps.AddArgument($Context.Queue)
-    [void]$ps.AddArgument($Context.State)
-    [void]$ps.AddArgument($Entry.Timeout)
-    [void]$ps.AddArgument($WorkDir)
+
+    if ($Target -and $Target.Mode -eq 'remote') {
+        [void]$ps.AddScript($script:MatriseRemoteWorker)
+        [void]$ps.AddArgument($Entry.Shell)
+        [void]$ps.AddArgument($Entry.Command)
+        [void]$ps.AddArgument($Context.Queue)
+        [void]$ps.AddArgument($Context.State)
+        [void]$ps.AddArgument($Entry.Timeout)
+        [void]$ps.AddArgument($Target.Name)
+        [void]$ps.AddArgument($Target.Credential)
+        [void]$ps.AddArgument($Target.UseSsl)
+        [void]$ps.AddArgument($Target.ConfigName)
+    }
+    else {
+        [void]$ps.AddScript($script:MatriseWorker)
+        [void]$ps.AddArgument($Entry.Shell)
+        [void]$ps.AddArgument($Entry.Command)
+        [void]$ps.AddArgument($Context.Queue)
+        [void]$ps.AddArgument($Context.State)
+        [void]$ps.AddArgument($Entry.Timeout)
+        [void]$ps.AddArgument($WorkDir)
+    }
 
     $Context.Runspace = $rs
     $Context.Shell    = $ps

@@ -417,6 +417,30 @@ function Get-MatriseExplainTable {
         'Administrator is the difference between being handed the keys and being told to wait outside. Plenty of these checks simply cannot see the whole machine without it.' `
         'If this says "not elevated", close Matrise and start it again with Matrise.bat, which asks Windows for permission first.'
 
+    & $e 'ui.target' `
+        'Which machine the commands run on. Leave it empty for this PC, or type the hostname of the machine you are supporting.' `
+        'Use the hostname, not the IP, wherever you can. A hostname can authenticate properly through the domain; a bare IP cannot, and needs extra setup.'
+
+    & $e 'ui.thispc' `
+        'Points everything back at the computer you are sitting in front of.' `
+        'Use it when you have finished with someone else machine, so you do not accidentally run a repair on the wrong one.'
+
+    & $e 'ui.testconn' `
+        'Walks the chain a remote connection depends on, one link at a time: does the name resolve, is the remote-management port open, and do your credentials get accepted.' `
+        'Run it before anything else when connecting to a machine. It tells you which link is broken instead of just saying "failed".'
+
+    & $e 'ui.runas' `
+        'Connect to the machine as a different account. Windows asks for the password itself; Matrise never sees or stores it.' `
+        'Only needed if your everyday account does not have support rights on endpoints, or when connecting by IP address.'
+
+    & $e 'ui.requests' `
+        'The queue of requests to unlock commands that policy holds back, and the conversation attached to each one.' `
+        'Raise a request from the message you get when something is blocked. Security answers here, and the reasoning stays attached to the decision.'
+
+    & $e 'ui.policy' `
+        'The rule set your Security team publishes, saying which commands IT Support may run freely, which need approval first, and which are off limits.' `
+        'Commands are marked in the list on the left. If nothing is marked, no policy file was found and everything is available.'
+
     & $e 'ui.findbar' `
         'The search bar for the board.' `
         'Ctrl+F brings you here from anywhere in the window.'

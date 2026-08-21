@@ -17,6 +17,10 @@ using System.Windows.Forms;
 
 public class MxPopupForm : Form
 {
+    // Add-Type warns about a type with no public surface; this also documents
+    // why the class exists at all.
+    public const string Purpose = "Matrise hover explanation panel";
+
     public MxPopupForm()
     {
         SetStyle(ControlStyles.OptimizedDoubleBuffer |
@@ -32,7 +36,13 @@ public class MxPopupForm : Form
         get
         {
             CreateParams cp = base.CreateParams;
-            cp.ExStyle    |= 0x08000000; // WS_EX_NOACTIVATE
+            cp.ExStyle    |= 0x08000000; // WS_EX_NOACTIVATE - never take focus
+            // WS_EX_TRANSPARENT - the panel is not hit-testable, so the mouse
+            // is still "over" the control underneath it. Without this, a panel
+            // that lands under the pointer triggers MouseLeave on that control,
+            // which hides the panel, which puts the pointer back over the
+            // control, which shows it again: a flicker loop.
+            cp.ExStyle    |= 0x00000020;
             cp.ClassStyle |= 0x00020000; // CS_DROPSHADOW
             return cp;
         }
@@ -157,22 +167,44 @@ function Request-MxPop {
     $script:MxHoverPoint = $At
     if ($script:MxPop -and $script:MxPop.Visible) {
         Show-MxPop -Text $Text -At $At
-    } else {
+    } elseif ($script:MxHoverTimer) {
         $script:MxHoverTimer.Stop()
         $script:MxHoverTimer.Start()
+    } else {
+        # Initialize-MxHover has not run (or Close-MxHover already tore it
+        # down). Show immediately rather than throwing inside a mouse handler.
+        Show-MxPop -Text $Text -At $At
     }
 }
 
 # --------------------------------------------------------------- wiring ----
 # Anchored under the control's bottom-left corner, so the panel always appears
 # in the same place relative to the thing it explains.
+# Handlers must not close over this function's locals.
+#
+# A plain scriptblock holds a reference to the session state, not to the local
+# frame, and that frame is gone the moment Register-MxHover returns - so the
+# handler would run with $Control and $Text both null and throw inside a mouse
+# event. GetNewClosure() fixes the capture but binds the scriptblock into a
+# dynamic module, which then cannot see Request-MxPop, because these functions
+# live in a dot-sourced script scope rather than the global one.
+#
+# So: no closure. The handler works off the sender it is given, and looks the
+# text up in a table keyed by the control itself.
+$script:MxHoverTexts = @{}
+
 function Register-MxHover {
     param($Control, [string]$Text)
     if (-not $Control -or [string]::IsNullOrWhiteSpace($Text)) { return }
 
+    $script:MxHoverTexts[$Control] = $Text
+
     $Control.Add_MouseEnter({
-        $p = $Control.PointToScreen((New-Object System.Drawing.Point(0, ($Control.Height + 5))))
-        Request-MxPop -Text $Text -At $p
+        param($sender, $e)
+        $t = $script:MxHoverTexts[$sender]
+        if ([string]::IsNullOrWhiteSpace($t)) { return }
+        $p = $sender.PointToScreen((New-Object System.Drawing.Point(0, ($sender.Height + 5))))
+        Request-MxPop -Text $t -At $p
     })
     $Control.Add_MouseLeave({ Hide-MxPop })
 }
@@ -183,9 +215,18 @@ function Register-MxHoverItem {
     param($Item, $Strip, [string]$Text)
     if (-not $Item -or [string]::IsNullOrWhiteSpace($Text)) { return }
 
+    $script:MxHoverTexts[$Item] = $Text
+
     $Item.Add_MouseEnter({
-        $p = $Strip.PointToScreen((New-Object System.Drawing.Point($Item.Bounds.Left, $Item.Bounds.Top)))
-        Request-MxPop -Text $Text -At $p
+        param($sender, $e)
+        $t = $script:MxHoverTexts[$sender]
+        if ([string]::IsNullOrWhiteSpace($t)) { return }
+        # A ToolStripItem is not a Control; its screen position comes from the
+        # strip that owns it.
+        $owner = $sender.Owner
+        if (-not $owner) { return }
+        $p = $owner.PointToScreen((New-Object System.Drawing.Point($sender.Bounds.Left, $sender.Bounds.Top)))
+        Request-MxPop -Text $t -At $p
     })
     $Item.Add_MouseLeave({ Hide-MxPop })
 }

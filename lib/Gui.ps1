@@ -54,66 +54,12 @@ $script:MxLastFind   = -1
 $script:MxChunks     = @()
 $script:MxChunkIndex = 0
 $script:MxLineCount  = 1
-$script:MxTipRow     = ''
 $script:MxHead       = $null
+$script:MxHeadExplain = ''
+$script:MxPolicy     = $null
+$script:MxTarget     = $null
+$script:MxReqCurrent = $null
 $script:MxLayoutReady = $false
-
-$script:MxTipText     = ''
-$script:MxTipFont     = New-Object System.Drawing.Font('Segoe UI', 9)
-$script:MxTipFontBold = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
-
-# Windows draws tooltips in the system light theme no matter what colours the
-# app uses, so they have to be owner-drawn to match. Owner drawing also means
-# ToolTipTitle is ignored, which is why the title is carried as line one of the
-# text and drawn bold here.
-function Initialize-MxTipTheme {
-    param($Tip)
-    $Tip.OwnerDraw = $true
-
-    $Tip.Add_Popup({
-        param($sender, $e)
-        $txt = ''
-        try { $txt = $sender.GetToolTip($e.AssociatedControl) } catch { }
-        if ([string]::IsNullOrEmpty($txt)) { $txt = $script:MxTipText }
-        if ([string]::IsNullOrEmpty($txt)) { return }
-
-        $lines = $txt -split "`r?`n"
-        $w = 0
-        foreach ($l in $lines) {
-            $lw = [System.Windows.Forms.TextRenderer]::MeasureText($l, $script:MxTipFontBold).Width
-            if ($lw -gt $w) { $w = $lw }
-        }
-        $h = ($lines.Count * $script:MxTipFont.Height)
-        $e.ToolTipSize = New-Object System.Drawing.Size(($w + 26), ($h + 18))
-    })
-
-    $Tip.Add_Draw({
-        param($sender, $e)
-        $g = $e.Graphics
-        $bg = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(40, 44, 53))
-        $g.FillRectangle($bg, $e.Bounds)
-        $pen = New-Object System.Drawing.Pen ($script:MxAccent)
-        $g.DrawRectangle($pen, 0, 0, ($e.Bounds.Width - 1), ($e.Bounds.Height - 1))
-
-        $lines = $e.ToolTipText -split "`r?`n"
-        $y = 9
-        for ($i = 0; $i -lt $lines.Count; $i++) {
-            $line = $lines[$i]
-            $f = $script:MxTipFont
-            $c = $script:MxFg
-            if ($i -eq 0 -and $line -notmatch '^(WHAT IT DOES|Found on line)') {
-                $f = $script:MxTipFontBold; $c = $script:MxAccent
-            }
-            elseif ($line -cmatch '^[A-Z][A-Z ]{3,}$') { $f = $script:MxTipFontBold; $c = $script:MxDim }
-            elseif ($line -cmatch '^(CAREFUL|NEEDS ADMINISTRATOR|ASKS YOU FIRST)') { $c = $script:MxFix }
-            elseif ($line -cmatch '^SAFE') { $c = [System.Drawing.Color]::FromArgb(120, 220, 140) }
-            [System.Windows.Forms.TextRenderer]::DrawText($g, $line, $f,
-                (New-Object System.Drawing.Point(12, $y)), $c)
-            $y += $script:MxTipFont.Height
-        }
-        $bg.Dispose(); $pen.Dispose()
-    })
-}
 
 # ------------------------------------------------------------ layout ------
 # The window remembers its size and where you dragged the dividers, so the
@@ -214,7 +160,7 @@ function New-MxButton {
     $b.Font      = New-Object System.Drawing.Font('Segoe UI', 9)
     $b.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(60, 66, 78)
     $b.Margin    = New-Object System.Windows.Forms.Padding(0, 0, 4, 0)
-    if ($Tip) { $script:MxTip.SetToolTip($b, $Tip) }
+    if ($Tip) { Register-MxHover -Control $b -Text $Tip }
     if ($OnClick) { $b.Add_Click($OnClick) }
     $b
 }
@@ -459,6 +405,30 @@ function Start-MxEntry {
 
     $resolved = Get-MxResolvedEntry -Entry $Entry
     if (-not $resolved) { $script:MxStatus.Text = 'cancelled'; return }
+
+    # Policy first, and the attempt is recorded before anything is decided, so
+    # a refusal is on the record just as firmly as a run.
+    $perm = Resolve-MatriseRunPermission -Entry $resolved -Policy $script:MxPolicy `
+                                         -TargetName $script:MxTarget.Name
+    Write-MatriseAudit -WorkDir $script:MxWorkDir -Policy $script:MxPolicy `
+        -Action $(if ($perm.Allowed) { 'run' } else { 'refused' }) `
+        -Entry $resolved -Target $script:MxTarget -Permission $perm | Out-Null
+
+    if (-not $perm.Allowed) {
+        $script:MxBatch.Clear()
+        Add-MxBoardLine ''
+        Add-MxBoardLine "*** POLICY: $($resolved.Name) was not run ($($perm.Action), rule $($perm.Rule)) ***"
+        Add-MxBoardLine "    $($perm.Reason)"
+        Update-MxBoardFlush
+        Show-MxPolicyStop -Entry $resolved -Permission $perm -Policy $script:MxPolicy
+        $script:MxStatus.Text = "blocked by policy: $($perm.Rule)"
+        return
+    }
+    if ($perm.Action -eq 'granted') {
+        Add-MxBoardLine ''
+        Add-MxBoardLine "*** Running under temporary approval: $($perm.Reason) ***"
+    }
+
     if (-not (Test-MxConfirm -Entry $resolved)) { $script:MxStatus.Text = 'cancelled'; return }
 
     if ($resolved.Admin -and -not $script:MxElevated) {
@@ -471,15 +441,18 @@ function Start-MxEntry {
     Add-MxBoardLine ''
     Add-MxBoardLine '================================================================'
     Add-MxBoardLine ("  {0}   [{1}]" -f $resolved.Name, $resolved.Group)
+    Add-MxBoardLine ("  target: {0}" -f (Get-MatriseTargetLabel -Target $script:MxTarget))
     Add-MxBoardLine ("  {0}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'))
     Add-MxBoardLine '================================================================'
     Add-MxBoardLine 'COMMAND:'
+    Add-MxBoardLine ("  " + (Get-MatriseRemoteCommandLine -Entry $resolved -Target $script:MxTarget))
     foreach ($l in ($resolved.Command -split "`r?`n")) { Add-MxBoardLine ("  $l") }
     Add-MxBoardLine '----------------------------------------------------------------'
     Update-MxBoardFlush
 
     $script:MxCtx = New-MatriseRunContext
-    Start-MatriseRun -Context $script:MxCtx -Entry $resolved -WorkDir $script:MxWorkDir | Out-Null
+    Start-MatriseRun -Context $script:MxCtx -Entry $resolved -WorkDir $script:MxWorkDir `
+                     -Target $script:MxTarget | Out-Null
 
     $script:MxStatus.Text = "running: $($resolved.Name)"
     $script:MxBtnStop.Enabled = $true
@@ -775,9 +748,100 @@ function Show-MxInputDialog {
     $null
 }
 
-function Show-MxNodeTip {
+# WinForms sends an unhandled exception in an event handler to the .NET JIT
+# debugger dialog, which is useless to a support technician and hides the stack
+# trace behind a Details button. Catch it, write the full trace where it can be
+# read later, and say something a human can act on.
+function Register-MxUiErrorHandler {
+    [System.Windows.Forms.Application]::SetUnhandledExceptionMode(
+        [System.Windows.Forms.UnhandledExceptionMode]::CatchException)
+
+    [System.Windows.Forms.Application]::add_ThreadException({
+        param($sender, $e)
+        $ex = $e.Exception
+        $stamp = (Get-Date).ToString('o')
+        $detail = @(
+            "=== $stamp ===",
+            "message : $($ex.Message)",
+            "type    : $($ex.GetType().FullName)",
+            "target  : $($ex.TargetSite)",
+            $ex.StackTrace,
+            ''
+        ) -join "`r`n"
+
+        $logPath = '(could not be written)'
+        try {
+            $dir = Join-Path $script:MxWorkDir 'audit'
+            New-Item -ItemType Directory -Path $dir -Force -ErrorAction SilentlyContinue | Out-Null
+            $logPath = Join-Path $dir 'ui-errors.log'
+            Add-Content -Path $logPath -Value $detail -Encoding UTF8 -ErrorAction SilentlyContinue
+        } catch { }
+
+        try {
+            Add-MxBoardLine ''
+            Add-MxBoardLine '*** Something in the window went wrong. The rest of Matrise is unaffected. ***'
+            Add-MxBoardLine "    $($ex.Message)"
+            Add-MxBoardLine "    Full details: $logPath"
+            Update-MxBoardFlush
+        } catch { }
+
+        try { Hide-MxPop } catch { }
+
+        [void][System.Windows.Forms.MessageBox]::Show(
+            ("Something in the window went wrong. Matrise is still running and " +
+             "nothing you have collected is lost.`r`n`r`n" +
+             "$($ex.Message)`r`n`r`n" +
+             "The full details were written to:`r`n$logPath`r`n`r`n" +
+             "It has also been added to the board, so Save report will include it."),
+            'Matrise', [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Warning)
+    })
+}
+
+function Update-MxTargetLabel {
+    if (-not $script:MxTargetLabel) { return }
+    $t = $script:MxTarget
+    if ($t.Mode -eq 'local') {
+        $script:MxTargetLabel.Text = "running on this PC ($env:COMPUTERNAME)"
+        $script:MxTargetLabel.ForeColor = $script:MxDim
+    } else {
+        $script:MxTargetLabel.Text = "remote: $(Get-MatriseTargetLabel -Target $t)   [$($t.Status)]"
+        $script:MxTargetLabel.ForeColor = $(if ($t.Status -eq 'ok') { $script:MxAccent } else { $script:MxFix })
+    }
+    if ($script:MxForm) {
+        $script:MxForm.Text = "Matrise - $(Get-MatriseTargetLabel -Target $t)" +
+            $(if ($script:MxElevated) { '  [Administrator]' } else { '  [limited - not elevated]' })
+    }
+}
+
+function Invoke-MxTestTarget {
+    $name = $script:MxTargetBox.Text.Trim()
+    $cred = $script:MxTarget.Credential
+    $script:MxTarget = New-MatriseTarget -Name $name -Credential $cred
+
+    if ($script:MxTarget.Mode -eq 'local') {
+        Update-MxTargetLabel
+        $script:MxStatus.Text = 'target: this PC'
+        return
+    }
+
+    $script:MxStatus.Text = "checking $name ..."
+    $script:MxForm.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+    try {
+        $report = Test-MatriseTarget -Target $script:MxTarget
+        Add-MxBoardText (Format-MatriseTargetReport -Report $report -Target $script:MxTarget)
+        Update-MxBoardFlush
+    }
+    finally {
+        $script:MxForm.Cursor = [System.Windows.Forms.Cursors]::Default
+    }
+    Update-MxTargetLabel
+    $script:MxStatus.Text = "connection check: $($script:MxTarget.Status)"
+}
+
+function Get-MxNodeExplain {
     param($Node)
-    if (-not $Node -or -not $Node.Tag) { return }
+    if (-not $Node -or -not $Node.Tag) { return '' }
 
     $title = ''
     $body  = ''
@@ -795,14 +859,8 @@ function Show-MxNodeTip {
             $body  = (Get-MatriseTip "group.$($Node.Tag.Group)") + "`r`n`r`n" + (Get-MatriseTip 'ui.tree')
         }
     }
-    if (-not $body) { return }
-
-    $script:MxTipText = $title + "`r`n`r`n" + $body
-    # Anchored to the node rather than the pointer, so it lands in the same
-    # place every time instead of wherever the mouse happened to stop.
-    $x = [math]::Min(($Node.Bounds.Left + 28), 220)
-    $y = $Node.Bounds.Bottom + 6
-    $script:MxTipNode.Show($script:MxTipText, $script:MxTree, $x, $y, 32000)
+    if (-not $body) { return '' }
+    $title + "`r`n`r`n" + $body
 }
 
 # ============================================================= self test ==
@@ -847,6 +905,138 @@ function Invoke-MxSelfTestPhase1 {
 
     $tip = Format-MatriseExplain -Entry $node.Tag.Entry
     Write-MxCheck 'hover text' (($tip.Length -gt 120) -and ($tip -match 'WHAT IT DOES')) "$($tip.Length) chars"
+
+    # The hover panel: our own window, themed, placed exactly where asked,
+    # and gone the moment it is dismissed.
+    # What matters is that showing the panel does not TAKE focus, not that the
+    # window happened to have it when the test ran.
+    $focusBefore = $script:MxForm.ContainsFocus
+    Show-MxPop -Text $tip -At (New-Object System.Drawing.Point(300, 300))
+    $bg = $script:MxPop.BackColor
+    Write-MxCheck 'hover opens'  ($script:MxPop.Visible -and $script:MxPop.Width -gt 250) `
+        "$($script:MxPop.Width)x$($script:MxPop.Height)px"
+    Write-MxCheck 'hover themed' (($bg.R -lt 70) -and ($bg.G -lt 70) -and ($bg.B -lt 80)) `
+        "background $($bg.R),$($bg.G),$($bg.B)"
+    Write-MxCheck 'hover anchored' (($script:MxPop.Left -eq 300) -and ($script:MxPop.Top -eq 300)) `
+        "sits at $($script:MxPop.Left),$($script:MxPop.Top) - exactly where it was asked to"
+    Write-MxCheck 'keeps focus' ($script:MxForm.ContainsFocus -eq $focusBefore) `
+        "panel did not steal focus (window focus stayed $focusBefore)"
+    Hide-MxPop
+    Write-MxCheck 'hover closes' (-not $script:MxPop.Visible) 'gone when the pointer leaves'
+
+    # Walk every node through the REAL hover path - Request-MxPop, the one the
+    # pointer goes through - not just Show-MxPop. Skipping this is how a null
+    # reference in the delay timer reached a user.
+    $hoverErr = 0
+    $hoverN   = 0
+    $firstErr = ''
+    foreach ($g in $script:MxTree.Nodes) {
+        foreach ($node2 in @($g) + @($g.Nodes) + @($g.Nodes | ForEach-Object { $_.Nodes })) { }
+    }
+    $walk = {
+        param($n)
+        try {
+            $txt = Get-MxNodeExplain -Node $n
+            if ($txt) {
+                Request-MxPop -Text $txt -At (New-Object System.Drawing.Point(100, 100))
+                $script:MxHoverWalkOk++
+            }
+        } catch {
+            $script:MxHoverWalkErr++
+            if (-not $script:MxHoverWalkMsg) { $script:MxHoverWalkMsg = $_.Exception.Message }
+        }
+    }
+    $script:MxHoverWalkOk = 0; $script:MxHoverWalkErr = 0; $script:MxHoverWalkMsg = ''
+    foreach ($g in $script:MxTree.Nodes) {
+        & $walk $g
+        foreach ($sec in $g.Nodes) {
+            & $walk $sec
+            foreach ($n in $sec.Nodes) { & $walk $n }
+        }
+    }
+    Hide-MxPop
+    $hoverN = $script:MxHoverWalkOk; $hoverErr = $script:MxHoverWalkErr; $firstErr = $script:MxHoverWalkMsg
+    Write-MxCheck 'hover walk' ($hoverErr -eq 0) `
+        "$hoverN nodes through the live path, $hoverErr errors$(if ($firstErr) { " - $firstErr" })"
+
+    # Every control in the window, entered and left, the way a pointer crossing
+    # the window does it. Raised through the protected On* methods so no mouse
+    # is moved and nothing is clicked.
+    $script:MxCtlOk = 0; $script:MxCtlErr = 0; $script:MxCtlMsg = ''
+    $flags = [System.Reflection.BindingFlags]::NonPublic -bor [System.Reflection.BindingFlags]::Instance
+    $mEnter = [System.Windows.Forms.Control].GetMethod('OnMouseEnter', $flags)
+    $mLeave = [System.Windows.Forms.Control].GetMethod('OnMouseLeave', $flags)
+
+    # Enter and leave only. MouseMove needs a MouseEventArgs, and PowerShell
+    # hands reflection its PSObject wrapper for that, which will not bind; the
+    # MouseMove handlers (tree, findings) are covered by the hover walk above
+    # and by the findings check below instead.
+    $emptyArgs = New-Object 'object[]' 1
+    $emptyArgs[0] = [System.EventArgs]::Empty
+
+    $sweep = {
+        param($ctl)
+        try {
+            $mEnter.Invoke($ctl, $emptyArgs)
+            $mLeave.Invoke($ctl, $emptyArgs)
+            $script:MxCtlOk++
+        }
+        catch {
+            $script:MxCtlErr++
+            $inner = $_.Exception
+            while ($inner.InnerException) { $inner = $inner.InnerException }
+            if (-not $script:MxCtlMsg) {
+                $script:MxCtlMsg = "$($ctl.GetType().Name)/$($ctl.Name): $($inner.Message)"
+            }
+        }
+        foreach ($child in $ctl.Controls) { & $sweep $child }
+    }
+    & $sweep $script:MxForm
+    Hide-MxPop
+    Write-MxCheck 'control sweep' ($script:MxCtlErr -eq 0) `
+        "$($script:MxCtlOk) controls entered+left, $($script:MxCtlErr) errors$(if ($script:MxCtlMsg) { " - $($script:MxCtlMsg)" })"
+
+    # And the target bar actions that do not need a real machine.
+    try {
+        $script:MxTargetBox.Text = ''
+        Invoke-MxTestTarget
+        Update-MxTargetLabel
+        Write-MxCheck 'target actions' $true 'test-connection and label refresh ran'
+    }
+    catch {
+        Write-MxCheck 'target actions' $false $_.Exception.Message
+    }
+
+    # ---- enterprise layer -------------------------------------------------
+    $allCat  = Get-MatriseCatalog
+    $blocked = @($allCat | Where-Object { (Get-MatrisePolicyDecision -Entry $_ -Policy $script:MxPolicy).Action -eq 'block' })
+    Write-MxCheck 'policy' $true `
+        "$($script:MxPolicy.policyName) - $(@($script:MxPolicy.rules).Count) rules, $($blocked.Count) blocked"
+
+    Write-MxCheck 'target' ($script:MxTarget.Mode -eq 'local') "defaults to $($script:MxTarget.Mode)"
+
+    if ($blocked.Count -gt 0) {
+        $bp = Resolve-MatriseRunPermission -Entry $blocked[0] -Policy $script:MxPolicy -TargetName $script:MxTarget.Name
+        Write-MxCheck 'policy gate' (-not $bp.Allowed) "$($blocked[0].Id) refused as '$($bp.Action)'"
+
+        $marked = 0
+        foreach ($g in $script:MxTree.Nodes) { foreach ($sec in $g.Nodes) { foreach ($n in $sec.Nodes) {
+            if ($n.Text -match '\[BLOCKED\]|\[approval\]') { $marked++ }
+        } } }
+        Write-MxCheck 'tree marks' ($marked -ge $blocked.Count) "$marked entries marked in the tree"
+    } else {
+        Write-MxCheck 'policy gate' $true 'no policy file - nothing to gate'
+    }
+
+    $rt = New-MatriseTarget -Name 'WS-SELFTEST'
+    $rc = Get-MatriseRemoteCommandLine -Entry $node.Tag.Entry -Target $rt
+    Write-MxCheck 'remote line' ($rc -match 'Invoke-Command -ComputerName WS-SELFTEST') 'renders the remote call'
+
+    $auditDir = Join-Path $script:MxWorkDir 'audit'
+    Write-MatriseAudit -WorkDir $script:MxWorkDir -Policy $script:MxPolicy -Action 'selftest' `
+        -Entry $node.Tag.Entry -Target $script:MxTarget -Permission $null -Note 'self test' | Out-Null
+    $auditFile = Join-Path $auditDir ("matrise-audit-{0}.jsonl" -f (Get-Date -Format 'yyyyMM'))
+    Write-MxCheck 'audit' (Test-Path $auditFile) 'attempt written to the audit log'
 
     # A long command must be fully readable, not scrolled out of sight.
     $long = $null
@@ -927,14 +1117,19 @@ function Show-MatriseWindow {
         [string]$WorkDir,
         # >0 drives the window through a scripted pass and closes it. Used by
         # .\Matrise.ps1 -SelfTest to prove the whole UI still wires up.
-        [int]$SelfTestMs = 0
+        [int]$SelfTestMs = 0,
+        $Policy = $null,
+        $Target = $null
     )
 
     $script:MxWorkDir  = $WorkDir
     $script:MxElevated = Test-MatriseElevated
+    $script:MxPolicy   = $(if ($Policy) { $Policy } else { New-MatriseDefaultPolicy })
+    $script:MxTarget   = $(if ($Target) { $Target } else { New-MatriseTarget })
     $catalog = Get-MatriseCatalog
 
     [System.Windows.Forms.Application]::EnableVisualStyles()
+    Register-MxUiErrorHandler
 
     $form = New-Object System.Windows.Forms.Form
     $script:MxForm = $form
@@ -959,20 +1154,7 @@ function Show-MatriseWindow {
     $form.ForeColor     = $script:MxFg
     $form.KeyPreview    = $true
 
-    $script:MxTip = New-Object System.Windows.Forms.ToolTip
-    $script:MxTip.AutoPopDelay   = 32000
-    $script:MxTip.InitialDelay   = 400
-    $script:MxTip.ReshowDelay    = 200
-
-    # A separate component for the hover explanations, because ToolTipTitle is
-    # set on the component rather than per control.
-    $script:MxTipNode = New-Object System.Windows.Forms.ToolTip
-    $script:MxTipNode.AutoPopDelay = 32000
-    $script:MxTipNode.InitialDelay = 350
-    $script:MxTipNode.ReshowDelay  = 150
-
-    Initialize-MxTipTheme $script:MxTip
-    Initialize-MxTipTheme $script:MxTipNode
+    Initialize-MxHover
 
     # ---------------------------------------------------------- main split --
     $split = New-Object System.Windows.Forms.SplitContainer
@@ -1012,6 +1194,9 @@ function Show-MatriseWindow {
             foreach ($e in $items) {
                 $label = $e.Name
                 if ($e.Admin -and -not $script:MxElevated) { $label += '  *' }
+                $pd = Get-MatrisePolicyDecision -Entry $e -Policy $script:MxPolicy
+                if ($pd.Action -eq 'block')           { $label += '   [BLOCKED]' }
+                elseif ($pd.Action -eq 'requireApproval') { $label += '   [approval]' }
                 $n = $sn.Nodes.Add($label)
                 $n.Tag = @{ Kind = 'entry'; Entry = $e }
                 switch ($e.Impact) {
@@ -1019,6 +1204,7 @@ function Show-MatriseWindow {
                     'heavy' { $n.ForeColor = $script:MxHeavy }
                     default { $n.ForeColor = $script:MxFg }
                 }
+                if ($pd.Action -eq 'block') { $n.ForeColor = [System.Drawing.Color]::FromArgb(110, 116, 128) }
             }
         }
         $gn.Expand()
@@ -1078,7 +1264,20 @@ function Show-MatriseWindow {
     $hCmd.Font       = New-Object System.Drawing.Font('Consolas', 9)
     $hCmd.BorderStyle = 'FixedSingle'
     $script:MxHeadCmd = $hCmd
-    $script:MxTip.SetToolTip($hCmd, (Get-MatriseTip 'ui.cmdbox'))
+    Register-MxHover -Control $hCmd -Text (Get-MatriseTip 'ui.cmdbox')
+
+    # The header explains whatever command is currently selected, so its text
+    # is looked up when you hover rather than registered once up front.
+    $headEnter = {
+        if (-not $script:MxHeadExplain) { return }
+        $p = $script:MxHeadDesc.PointToScreen(
+                (New-Object System.Drawing.Point(0, ($script:MxHeadDesc.Height + 4))))
+        Request-MxPop -Text $script:MxHeadExplain -At $p
+    }
+    $hName.Add_MouseEnter($headEnter)
+    $hDesc.Add_MouseEnter($headEnter)
+    $hName.Add_MouseLeave({ Hide-MxPop })
+    $hDesc.Add_MouseLeave({ Hide-MxPop })
 
     $head.Controls.Add($hCmd)
     $head.Controls.Add($hDesc)
@@ -1093,7 +1292,7 @@ function Show-MatriseWindow {
 
     $fl = New-MxLabel -Text 'Find' -Size 9 -Color $script:MxDim
     $fl.SetBounds(8, 9, 32, 20)
-    $script:MxTip.SetToolTip($fl, (Get-MatriseTip 'ui.find'))
+    Register-MxHover -Control $fl -Text (Get-MatriseTip 'ui.find')
     $findBar.Controls.Add($fl)
 
     $find = New-Object System.Windows.Forms.TextBox
@@ -1103,7 +1302,7 @@ function Show-MatriseWindow {
     $find.BorderStyle = 'FixedSingle'
     $find.Font        = New-Object System.Drawing.Font('Consolas', 10)
     $script:MxFind = $find
-    $script:MxTip.SetToolTip($find, (Get-MatriseTip 'ui.find'))
+    Register-MxHover -Control $find -Text (Get-MatriseTip 'ui.find')
     $findBar.Controls.Add($find)
 
     $fcount = New-MxLabel -Text '' -Size 9 -Color $script:MxHit
@@ -1117,7 +1316,7 @@ function Show-MatriseWindow {
     $chk.ForeColor = $script:MxFg
     $chk.FlatStyle = 'Flat'
     $script:MxChk = $chk
-    $script:MxTip.SetToolTip($chk, (Get-MatriseTip 'ui.filter'))
+    Register-MxHover -Control $chk -Text (Get-MatriseTip 'ui.filter')
     $findBar.Controls.Add($chk)
 
     $wrap = New-Object System.Windows.Forms.CheckBox
@@ -1126,7 +1325,7 @@ function Show-MatriseWindow {
     $wrap.ForeColor = $script:MxFg
     $wrap.FlatStyle = 'Flat'
     $script:MxWrap = $wrap
-    $script:MxTip.SetToolTip($wrap, (Get-MatriseTip 'ui.wrap'))
+    Register-MxHover -Control $wrap -Text (Get-MatriseTip 'ui.wrap')
     $findBar.Controls.Add($wrap)
 
     $boardHost.Controls.Add($board)
@@ -1198,7 +1397,7 @@ function Show-MatriseWindow {
         '',
         'Hover over anything in this window for an explanation of what it does.'
     ) -join "`r`n"
-    $script:MxTip.SetToolTip($why, (Get-MatriseTip 'ui.why'))
+    Register-MxHover -Control $why -Text (Get-MatriseTip 'ui.why')
     $script:MxWhy = $why
     $fsplit.Panel2.Controls.Add($why)
 
@@ -1279,19 +1478,84 @@ function Show-MatriseWindow {
     $autoCopy = New-Object System.Windows.Forms.CheckBox
     $autoCopy.Text = 'Auto-copy'; $autoCopy.Width = 88; $autoCopy.Height = 26
     $autoCopy.ForeColor = $script:MxFg; $autoCopy.FlatStyle = 'Flat'
-    $script:MxTip.SetToolTip($autoCopy, (Get-MatriseTip 'ui.autocopy'))
+    Register-MxHover -Control $autoCopy -Text (Get-MatriseTip 'ui.autocopy')
     $script:MxAutoCopy = $autoCopy
 
     $autoScan = New-Object System.Windows.Forms.CheckBox
     $autoScan.Text = 'Auto-analyze'; $autoScan.Width = 106; $autoScan.Height = 26
     $autoScan.Checked = $true
     $autoScan.ForeColor = $script:MxFg; $autoScan.FlatStyle = 'Flat'
-    $script:MxTip.SetToolTip($autoScan, (Get-MatriseTip 'ui.autoscan'))
+    Register-MxHover -Control $autoScan -Text (Get-MatriseTip 'ui.autoscan')
     $script:MxAutoScan = $autoScan
 
     $bar.Controls.AddRange(@($btnRun, $btnCmd, $btnStop, $sep1,
                              $btnCopy, $btnPaste, $btnLoad, $btnSave, $btnClear, $sep2,
                              $btnScan, $btnAgent, $btnChunk, $autoCopy, $autoScan))
+
+    # ------------------------------------------------------------ target bar -
+    $tbar = New-Object System.Windows.Forms.Panel
+    $tbar.Dock = 'Top'
+    $tbar.Height = 38
+    $tbar.BackColor = [System.Drawing.Color]::FromArgb(28, 31, 38)
+
+    $tl = New-MxLabel -Text 'Machine' -Size 9 -Color $script:MxDim
+    $tl.SetBounds(10, 10, 60, 20)
+    $tbar.Controls.Add($tl)
+
+    $tbox = New-Object System.Windows.Forms.TextBox
+    $tbox.SetBounds(72, 6, 210, 24)
+    $tbox.BackColor = $script:MxPanel; $tbox.ForeColor = $script:MxFg
+    $tbox.BorderStyle = 'FixedSingle'
+    $tbox.Font = New-Object System.Drawing.Font('Consolas', 10)
+    $tbox.Text = $(if ($script:MxTarget.Mode -eq 'remote') { $script:MxTarget.Name } else { '' })
+    $script:MxTargetBox = $tbox
+    Register-MxHover -Control $tbox -Text (Get-MatriseTip 'ui.target')
+    $tbar.Controls.Add($tbox)
+
+    $btnLocal = New-MxButton -Text 'This PC' -Width 78 -Tip (Get-MatriseTip 'ui.thispc') -OnClick {
+        $script:MxTargetBox.Text = ''
+        $script:MxTarget = New-MatriseTarget
+        Update-MxTargetLabel
+        $script:MxStatus.Text = 'target: this PC'
+    }
+    $btnLocal.Location = New-Object System.Drawing.Point(290, 5)
+    $tbar.Controls.Add($btnLocal)
+
+    $btnConnect = New-MxButton -Text 'Test connection' -Width 118 -Tip (Get-MatriseTip 'ui.testconn') -OnClick {
+        Invoke-MxTestTarget
+    }
+    $btnConnect.Location = New-Object System.Drawing.Point(372, 5)
+    $tbar.Controls.Add($btnConnect)
+
+    $btnCred = New-MxButton -Text 'Run as...' -Width 88 -Tip (Get-MatriseTip 'ui.runas') -OnClick {
+        $c = $null
+        try {
+            $c = Get-Credential -Message 'Credentials to connect to the target machine'
+        } catch { }
+        if ($c) {
+            $script:MxTarget = New-MatriseTarget -Name $script:MxTargetBox.Text -Credential $c
+            Update-MxTargetLabel
+            $script:MxStatus.Text = "will connect as $($c.UserName)"
+        }
+    }
+    $btnCred.Location = New-Object System.Drawing.Point(494, 5)
+    $tbar.Controls.Add($btnCred)
+
+    $tstat = New-MxLabel -Text '' -Size 9 -Color $script:MxDim
+    $tstat.SetBounds(592, 10, 420, 20)
+    $script:MxTargetLabel = $tstat
+    $tbar.Controls.Add($tstat)
+
+    $btnReq = New-MxButton -Text 'Requests' -Width 92 -Tip (Get-MatriseTip 'ui.requests') -OnClick {
+        Show-MxRequestsWindow -Policy $script:MxPolicy
+    }
+    $btnReq.Anchor = 'Top, Right'
+    $btnReq.Location = New-Object System.Drawing.Point(($tbar.Width - 200), 5)
+    $tbar.Controls.Add($btnReq)
+
+    $plabel = New-MxLabel -Text '' -Size 9 -Color $script:MxDim
+    $plabel.SetBounds(0, 0, 0, 0)
+    $script:MxPolicyLabel = $plabel
 
     # ----------------------------------------------------------- status bar -
     $status = New-Object System.Windows.Forms.StatusStrip
@@ -1309,7 +1573,6 @@ function Show-MatriseWindow {
 
     $sLines = New-Object System.Windows.Forms.ToolStripStatusLabel
     $sLines.Text = '0 lines'; $sLines.ForeColor = $script:MxDim
-    $sLines.ToolTipText = Get-MatriseTip 'ui.board'
     $script:MxStatLines = $sLines
 
     $sAdmin = New-Object System.Windows.Forms.ToolStripStatusLabel
@@ -1319,13 +1582,28 @@ function Show-MatriseWindow {
         $sAdmin.Text = 'not elevated - * commands return partial data'
         $sAdmin.ForeColor = $script:MxFix
     }
-    $sAdmin.ToolTipText = Get-MatriseTip 'ui.admin'
 
-    [void]$status.Items.AddRange(@($sMain, $sFind, $sLines, $sAdmin))
+
+    $sPolicy = New-Object System.Windows.Forms.ToolStripStatusLabel
+    if ($script:MxPolicy.IsManaged) {
+        $sPolicy.Text = "policy: $($script:MxPolicy.policyName)"
+        $sPolicy.ForeColor = $script:MxAccent
+    } else {
+        $sPolicy.Text = 'no policy - all commands available'
+        $sPolicy.ForeColor = $script:MxDim
+    }
+
+    [void]$status.Items.AddRange(@($sMain, $sFind, $sLines, $sPolicy, $sAdmin))
+    Register-MxHoverItem -Item $sPolicy -Strip $status -Text (Get-MatriseTip 'ui.policy')
+
+    Register-MxHoverItem -Item $sLines -Strip $status -Text (Get-MatriseTip 'ui.board')
+    Register-MxHoverItem -Item $sFind  -Strip $status -Text (Get-MatriseTip 'ui.findings')
+    Register-MxHoverItem -Item $sAdmin -Strip $status -Text (Get-MatriseTip 'ui.admin')
 
     # Dock order matters: the Fill control must be added first so it ends up
     # last in the layout pass and receives whatever space is left over.
     $form.Controls.Add($split)
+    $form.Controls.Add($tbar)
     $form.Controls.Add($bar)
     $form.Controls.Add($status)
 
@@ -1348,9 +1626,7 @@ function Show-MatriseWindow {
                 'heavy' { $script:MxHeavy }
                 default { $script:MxFg }
             })
-            $plain = Format-MatriseExplain -Entry $e
-            $script:MxTip.SetToolTip($script:MxHeadName, $plain)
-            $script:MxTip.SetToolTip($script:MxHeadDesc, $plain)
+            $script:MxHeadExplain = Format-MatriseExplain -Entry $e
             Update-MxHeadHeight
         }
         elseif ($node.Tag.Kind -eq 'section') {
@@ -1370,12 +1646,25 @@ function Show-MatriseWindow {
         }
     })
 
-    $tree.Add_NodeMouseHover({
+    $tree.Add_MouseMove({
         param($sender, $e)
-        Show-MxNodeTip -Node $e.Node
+        $n = $script:MxTree.GetNodeAt($e.X, $e.Y)
+        $key = $(if ($n) { 'n' + $n.GetHashCode() } else { '' })
+        if ($key -eq $script:MxHoverKey) { return }
+        $script:MxHoverKey = $key
+        if (-not $n) { Hide-MxPop; return }
+
+        $txt = Get-MxNodeExplain -Node $n
+        if (-not $txt) { Hide-MxPop; return }
+        # Anchored to the node itself, indented past the expander arrow.
+        $p = $script:MxTree.PointToScreen(
+                (New-Object System.Drawing.Point(($n.Bounds.Left + 18), ($n.Bounds.Bottom + 3))))
+        $script:MxHoverKey = $key
+        Request-MxPop -Text $txt -At $p
     })
-    $tree.Add_MouseLeave({ $script:MxTipNode.Hide($script:MxTree) })
-    $tree.Add_NodeMouseClick({ $script:MxTipNode.Hide($script:MxTree) })
+    $tree.Add_MouseLeave({ Hide-MxPop })
+    $tree.Add_MouseWheel({ Hide-MxPop })
+    $tree.Add_NodeMouseClick({ Hide-MxPop })
 
     $tree.Add_NodeMouseDoubleClick({
         param($s, $e)
@@ -1421,18 +1710,20 @@ function Show-MatriseWindow {
 
     $flist.Add_MouseMove({
         param($sender, $e)
-        $it = $script:MxFindList.GetItemAt($e.X, $e.Y)
-        $key = $(if ($it) { "row$($it.Index)" } else { 'none' })
-        if ($key -eq $script:MxTipRow) { return }
-        $script:MxTipRow = $key
+        $it  = $script:MxFindList.GetItemAt($e.X, $e.Y)
+        $key = $(if ($it) { 'r' + $it.Index } else { 'list' })
+        if ($key -eq $script:MxHoverKey) { return }
+        $script:MxHoverKey = $key
 
         if (-not $it) {
-            $script:MxTipText = "Findings`r`n`r`n" + (Get-MatriseTip 'ui.findings')
-            $script:MxTipNode.Show($script:MxTipText, $script:MxFindList, ($e.X + 20), ($e.Y + 20), 32000)
+            $p = $script:MxFindList.PointToScreen((New-Object System.Drawing.Point(12, 26)))
+            Request-MxPop -Text ("Findings`r`n`r`n" + (Get-MatriseTip 'ui.findings')) -At $p
             return
         }
         $f = $it.Tag
         $body = @(
+            "[$($f.Severity)]  $($f.Title)",
+            '',
             ("Found on line {0}:" -f $f.Line),
             (Format-MatriseWrap -Text $f.Evidence -Width 64),
             '',
@@ -1441,13 +1732,13 @@ function Show-MatriseWindow {
             '',
             'Double-click this row to jump to that line on the board.'
         ) -join "`r`n"
-        $script:MxTipText = "[$($f.Severity)]  $($f.Title)`r`n`r`n" + $body
-        $script:MxTipNode.Show($script:MxTipText, $script:MxFindList, ($e.X + 20), ($e.Y + 20), 32000)
+        # Anchored to the row, so it sits against the finding it describes.
+        $p = $script:MxFindList.PointToScreen(
+                (New-Object System.Drawing.Point(($it.Bounds.Left + 12), ($it.Bounds.Bottom + 2))))
+        Request-MxPop -Text $body -At $p
     })
-    $flist.Add_MouseLeave({
-        $script:MxTipNode.Hide($script:MxFindList)
-        $script:MxTipRow = ''
-    })
+    $flist.Add_MouseLeave({ Hide-MxPop })
+    $flist.Add_MouseWheel({ Hide-MxPop })
 
     $flist.Add_DoubleClick({
         if ($script:MxFindList.SelectedItems.Count -eq 0) { return }
@@ -1519,6 +1810,7 @@ function Show-MatriseWindow {
 
         Update-MxFindColumns
         Update-MxHeadHeight
+        Update-MxTargetLabel
         $script:MxLayoutReady = $true
 
         # Land on the command the welcome text points at, rather than making
@@ -1534,7 +1826,10 @@ function Show-MatriseWindow {
         $script:MxTree.Select()
     })
 
+    $form.Add_Deactivate({ Hide-MxPop })
+    $form.Add_Move({ Hide-MxPop })
     $form.Add_Resize({
+        Hide-MxPop
         if (-not $script:MxLayoutReady) { return }
         Update-MxFindColumns
         Update-MxHeadHeight
@@ -1551,6 +1846,7 @@ function Show-MatriseWindow {
             Stop-MatriseRun -Context $script:MxCtx
         }
         Save-MxLayout
+        Close-MxHover
         $script:MxTimer.Stop()
         Close-MatriseRun -Context $script:MxCtx
     })

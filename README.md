@@ -81,8 +81,18 @@ explain what was seen and why it matters. The safety line at the bottom is
 generated from the command itself, so it can never tell you something is safe
 when it is not.
 
-All of that wording lives in one file, `lib\Explain.ps1`, separate from any
-logic — so it can be reworded, or translated, without touching the tool.
+The panel appears anchored directly beneath the thing it explains, stays put
+while you read it, and closes the moment the pointer leaves. It never takes
+focus and it is click-through, so it cannot get in the way of what is underneath.
+
+It is not a Windows tooltip. The built-in control ignores custom drawing in
+several situations, so it kept reverting to the system light theme, and it
+insists on its own show / fade / reposition behaviour, which is why it used to
+drift around instead of sitting on its subject. `lib\Hover.ps1` is a small
+purpose-built window instead.
+
+The wording lives in one file, `lib\Explain.ps1`, separate from any logic — so
+it can be reworded, or translated, without touching the tool.
 
 ### Resizing
 
@@ -167,6 +177,132 @@ losing meaning.
 
 ---
 
+## Running it in a managed estate
+
+Matrise was written to work inside AD-managed environments where application
+control blocks `.exe`, software arrives through Software Center, and Security
+sets limits on what IT Support may run.
+
+### Supporting another machine
+
+Type a hostname in the **Machine** box and everything runs there instead of
+here, over PowerShell Remoting (WinRM). No agent, no `.exe`, no listener of our
+own, nothing needing an application-control exception.
+
+**Test connection** walks the chain one link at a time — DNS, the WinRM port,
+then authentication — and stops at the first thing that is broken with the fix
+attached. "Connection failed" costs an afternoon; "nothing is listening on TCP
+5985, WinRM is normally enabled by GPO so this machine is the exception" does
+not.
+
+Use the hostname, not the IP. A bare IP cannot use Kerberos, so WinRM falls
+back to NTLM and needs an explicit credential, HTTPS, or a TrustedHosts entry.
+Matrise says so before you hit it rather than after. **Run as...** uses the
+Windows credential prompt; the password goes into a `PSCredential` and is never
+written to a file, a command line, or a process listing.
+
+### Policy
+
+Security publishes a `policy.json` (see `policy.example.json`). Point
+`MATRISE_POLICY` at it on a read-only share, or drop it next to the app. Rules
+match on command id, a regex over the command line, group/section, or impact,
+and resolve most-specific-first. Each is `allow`, `requireApproval`, or `block`,
+and carries a reason the operator actually reads.
+
+Blocked and approval-only commands are marked in the tree. Every attempt —
+allowed or refused — is written to the audit log *before* it runs, so an attempt
+that hangs is still on the record.
+
+> **A client-side block list is not a security boundary.** Matrise is
+> PowerShell: anyone who can run it can read it, edit the policy, or skip
+> Matrise and type the command into a console. This layer stops an honest
+> operator from doing the wrong thing by accident and produces an audit trail.
+> It must never be presented to a Security team as though it does more.
+>
+> The enforcement boundary is the endpoint. See JEA below.
+
+### Requests and approvals
+
+When policy holds a command back, the operator raises a request with a
+justification and a time window. Security approves it for that window, or
+declines, and the two of them talk it through on the request itself.
+
+Two directories on a share, with different ACLs:
+
+```
+\\share\matrise\requests\   Support: create + comment    Security: full
+\\share\matrise\grants\     Support: READ ONLY           Security: full
+```
+
+**The ACL on the grants folder is the control.** An operator cannot write a
+grant for themselves because the file system refuses, not because this script
+declines. Real boundary, enforced by Windows, auditable through file system
+auditing, needing no server and no open port. Grants are scoped to one command,
+one operator, one machine, and one time window — all four are checked, and all
+four are covered by tests.
+
+Approve and Deny are shown to everyone; whether they work is decided by that
+ACL, and when it says no the error explains that it is the share permissions
+talking, not the app.
+
+**On peer-to-peer chat** — it was asked for, and I would advise against it. A
+direct socket between two workstations means a listener on an endpoint, a
+firewall exception, another authentication scheme to get wrong, and a
+conversation nobody can audit, for something Teams already does. What was
+actually missing is chat *attached to the request*, so the reasoning lives next
+to the decision permanently. That is the comment thread: one JSON file,
+inheriting the share's ACLs and auditing.
+
+### JEA — where the rules become real
+
+```bash
+powershell -File Matrise.ps1 -ExportJea .\out
+```
+
+Generates a constrained PowerShell Remoting endpoint from the *same* catalog and
+policy, so the list the operator sees and the list the machine enforces are
+built from one source and cannot drift:
+
+- `SessionType = RestrictedRemoteServer`, `LanguageMode = NoLanguage` — there is
+  no command line to type an unapproved command into, only the generated
+  functions.
+- `RunAsVirtualAccount` — commands run as a per-session temporary local admin,
+  so **the operator's own account needs no admin rights on any endpoint.** That
+  removes the standing privilege most endpoint-support models leak.
+- Blocked commands are not merely hidden; they are absent from the endpoint.
+- Prompted commands validate their input at the parameter, so nothing reaching
+  a shell can carry `&`, `|`, `>` or `%`.
+- The endpoint transcribes every session itself.
+
+Two roles are produced: `MatriseSupport` (allow) and `MatriseSupportElevated`
+(allow + requireApproval). Map the elevated role to a group with **time-boxed
+membership** — AD PAM shadow groups, or Entra PIM. That, not the client, is what
+makes an approval expire.
+
+`README.txt` and `MatriseSupport.psrc` in the output are written as plain,
+readable PowerShell data specifically so a human on the Security side can review
+them before anything is deployed.
+
+### Deployment
+
+No compiled binary — `.ps1` and `.bat` only. For an estate enforcing
+`AllSigned`, sign the scripts with your internal code-signing certificate before
+packaging; unsigned files simply refuse to load and the failure reports itself
+badly. `Install-MatriseJea.ps1` is written to be deployed as a Software Center /
+Intune PowerShell script, running as SYSTEM with no interactive logon.
+
+### Command line
+
+```bash
+powershell -File Matrise.ps1 -Requests
+```
+
+`-Target <host>` opens aimed at a machine · `-ExportJea <dir>` generates the
+endpoint · `-Requests` lists the queue · `-Approve <id> -Minutes 60` and
+`-Deny <id>` decide one, both writing to the audit log.
+
+---
+
 ## Safety
 
 - Read-only commands run without ceremony. Anything that changes the system shows
@@ -191,7 +327,7 @@ powershell -ExecutionPolicy Bypass -File Matrise.ps1 -SelfTest
 
 Builds the real window, loads a synthetic "infected machine" fixture, runs the
 analyzer, exercises find/filter/jump, then runs a real command end to end and
-checks the output landed. Nineteen checks, PASS/FAIL each — including one that
+checks the output landed. Thirty-two checks, PASS/FAIL each — including one that
 fails if any command is missing its hover explanation.
 
 `tests\sample-compromised.txt` is that fixture — fake output from a deliberately
@@ -242,6 +378,15 @@ Matrise.bat              launcher, elevates first
 Matrise-no-admin.bat     launcher without UAC
 Matrise.ps1              entry point; -Analyze / -List / -SelfTest
 lib\Explain.ps1          every word Matrise says, in plain English
+lib\Hover.ps1            the themed hover-explanation panel
+lib\Target.ps1           remote targeting over WinRM, with a real preflight
+lib\Policy.ps1           policy rules, grants and the audit log
+lib\Requests.ps1         request store, approvals, comment thread
+lib\GuiRequests.ps1      the request and approval windows
+lib\Jea.ps1              generates the constrained endpoint from catalog+policy
+policy.example.json      an example Security policy
+audit\                   local audit log (jsonl, one line per attempt)
+audit\ui-errors.log      full stack traces for anything that goes wrong in the window
 lib\Catalog.ps1          the 62 commands
 lib\Runner.ps1           background execution, live output, real-console mode
 lib\Analyzer.ps1         offline detection rules
