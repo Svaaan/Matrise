@@ -207,6 +207,17 @@ $script:MatriseRemoteWorker = {
                 Emit 'The machine did not answer on WinRM. Use "Test connection" for a'
                 Emit 'step by step check of DNS, the port and authentication.'
             }
+            elseif ($m -match '0x8009030e|logon session does not exist') {
+                Emit 'WinRM accepted the connection but had no credentials to use.'
+                Emit ''
+                Emit 'Between PCs that are not in a company domain, Windows cannot reuse'
+                Emit 'the account you are logged in as - it has to be told explicitly.'
+                Emit 'Press "Run as..." and supply the sign-in for that machine, or pair'
+                Emit 'with it through Home setup and it will be filled in for you.'
+                Emit ''
+                Emit 'This also happens when testing against your own PC by name: it is'
+                Emit 'the same restriction, not a fault.'
+            }
             elseif ($m -match 'not recognized|CommandNotFound') {
                 Emit 'The endpoint accepted the connection but refused the command.'
                 Emit 'If you are connecting to a constrained (JEA) endpoint, that is it'

@@ -22,6 +22,7 @@ param(
     [switch]$SelfTest,
     [string]$Target,
     [string]$TestRemote,
+    [string]$Pair,
     [string]$ExportJea,
     [switch]$Requests,
     [switch]$Unblock,
@@ -44,6 +45,7 @@ $env:MATRISE_HOME = $root
 . (Join-Path $root 'lib\Agent.ps1')
 . (Join-Path $root 'lib\Target.ps1')
 . (Join-Path $root 'lib\Peer.ps1')
+. (Join-Path $root 'lib\Handshake.ps1')
 . (Join-Path $root 'lib\Policy.ps1')
 . (Join-Path $root 'lib\Requests.ps1')
 . (Join-Path $root 'lib\Jea.ps1')
@@ -74,6 +76,28 @@ if ($Unblock) {
     exit 0
 }
 
+# ---- headless: pair from a code -----------------------------------------
+if ($Pair) {
+    try { $r = Import-MatrisePairingCode -Code $Pair }
+    catch { Write-Error $_.Exception.Message; exit 1 }
+
+    foreach ($s in $r.Steps) { Write-Output ("  [{0}] {1}" -f $(if ($s.Ok) { 'ok  ' } else { 'FAIL' }), $s.Text) }
+    Write-Output ''
+
+    $bad = @($r.Steps | Where-Object { -not $_.Ok })
+    if ($bad.Count -gt 0) {
+        Write-Output "Pairing is INCOMPLETE - $($bad.Count) step(s) failed above."
+        Write-Output 'The sign-in was saved, but the connection will still be refused until'
+        Write-Output 'the trusted list is updated. Re-run this from an Administrator window:'
+        Write-Output "   .\Matrise.ps1 -Pair <the same code>"
+        exit 1
+    }
+
+    Write-Output "Paired with $($r.HostName). Try it with:"
+    Write-Output "   .\Matrise.ps1 -TestRemote $($r.HostName)"
+    exit 0
+}
+
 # ---- headless: prove the remote path, start to finish -------------------
 # Point it at another PC, or at this one's own name to loop back through WinRM
 # and check the machinery before you involve anybody else.
@@ -83,11 +107,24 @@ if ($TestRemote) {
     Write-Output "MATRISE REMOTE TEST -> $TestRemote$(if ($loopback) { '   (loopback through WinRM)' })"
     Write-Output ('=' * 64)
 
-    $cred = $null
-    if (-not $loopback) {
+    # Even against this same PC, a workgroup machine cannot reuse the account
+    # you are logged in as - WinRM needs it spelled out. Offering the prompt
+    # for loopback too is what makes the loopback test meaningful.
+    $cred = Get-MatrisePeerCredential -HostName $TestRemote
+    if ($cred) {
         Write-Output ''
-        Write-Output 'Credentials for that machine. Press Cancel to try your current account.'
-        try { $cred = Get-Credential -Message "Sign in to $TestRemote" } catch { }
+        Write-Output "Using the saved sign-in for $TestRemote ($($cred.UserName))."
+    }
+    else {
+        Write-Output ''
+        if ($loopback) {
+            Write-Output 'Testing against this PC still needs a sign-in for it - Windows will not'
+            Write-Output 'reuse your current session for a network logon to itself. Enter your own'
+            Write-Output "Windows account as  $env:COMPUTERNAME\$env:USERNAME , or Cancel to try without."
+        } else {
+            Write-Output "Sign-in for $TestRemote. Cancel to try your current account."
+        }
+        try { $cred = Get-Credential -Message "Sign in to $TestRemote" -UserName "$TestRemote\" } catch { }
     }
 
     $t = New-MatriseTarget -Name $TestRemote -Credential $cred -ForceRemote

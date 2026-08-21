@@ -430,8 +430,8 @@ function Get-MatriseExplainTable {
         'Run it before anything else when connecting to a machine. It tells you which link is broken instead of just saying "failed".'
 
     & $e 'ui.runas' `
-        'Connect to the machine as a different account. Windows asks for the password itself; Matrise never sees or stores it.' `
-        'Only needed if your everyday account does not have support rights on endpoints, or when connecting by IP address.'
+        'The username and password of an account ON THE OTHER MACHINE. Windows asks for them itself, in its own dialog; Matrise never sees or stores the password.' `
+        'Type the user name as COMPUTERNAME\username - a bare name is the usual cause of "Access is denied" at home. If they use a Microsoft account it is that password, never their PIN.'
 
     & $e 'ui.requests' `
         'The queue of requests to unlock commands that policy holds back, and the conversation attached to each one.' `
@@ -448,6 +448,14 @@ function Get-MatriseExplainTable {
     & $e 'ui.sendmsg' `
         'Puts a message box on the other person screen, so you can tell them what you are doing or ask them to try something.' `
         'It works whether or not they have Matrise open. Your name and this computer name are always shown on it - there is no anonymous option.'
+
+    & $e 'ui.pair' `
+        'Their PC prints one code. Paste it here and this PC learns everything at once: which machine, that it is allowed to talk to it, and how to sign in.' `
+        'The code is a password in disguise - anyone who has it can sign in to their PC. Send it privately and delete the message afterwards.'
+
+    & $e 'ui.homesetup' `
+        'Sets up help between two PCs in a house, where there is no company network to arrange it for you.' `
+        'They run one script, they send you one code, you paste it. Nothing else needs typing.'
 
     & $e 'ui.findbar' `
         'The search bar for the board.' `

@@ -153,157 +153,184 @@ function Show-MxPolicyStop {
 function Show-MxHomeSetup {
     param($Target)
 
-    $name = ''
-    if ($Target -and $Target.Mode -eq 'remote') { $name = $Target.Name }
-
     $d = New-Object System.Windows.Forms.Form
     $d.Text = 'Matrise - help another PC in this house'
     $d.StartPosition = 'CenterParent'
-    $d.ClientSize = New-Object System.Drawing.Size(760, 700)
-    $d.MinimumSize = New-Object System.Drawing.Size(680, 600)
+    $d.ClientSize = New-Object System.Drawing.Size(780, 700)
+    $d.MinimumSize = New-Object System.Drawing.Size(720, 620)
     $d.BackColor = $script:MxBg; $d.ForeColor = $script:MxFg
 
-    $title = New-MxLabel -Text 'Two steps, one on each PC' -Size 12 -Bold $true
-    $title.SetBounds(16, 12, 700, 24)
+    $title = New-MxLabel -Text 'They run one script. They send you one code. Done.' -Size 12 -Bold $true
+    $title.SetBounds(16, 12, 740, 24)
     $d.Controls.Add($title)
 
     $intro = New-MxLabel -Text (@(
-        'Home PCs are not in a domain, so Windows does not trust them with each other by',
-        'default. That trust has to be granted once, deliberately, on both machines.'
+        'Windows will not let one PC switch on remote help for another - that would be the',
+        'security hole. So something has to run once on their machine, with their consent.',
+        'After that, nothing needs typing: the code carries everything.'
     ) -join "`r`n") -Size 9 -Color $script:MxDim
-    $intro.SetBounds(16, 40, 720, 36)
+    $intro.SetBounds(16, 40, 748, 50)
     $d.Controls.Add($intro)
 
-    $s1 = New-MxLabel -Text 'STEP 1 - on the PC that needs help' -Size 10 -Bold $true -Color $script:MxAccent
-    $s1.SetBounds(16, 82, 500, 20)
+    # ---------------------------------------------------------------- step 1
+    $s1 = New-MxLabel -Text 'STEP 1 - send them this script' -Size 10 -Bold $true -Color $script:MxAccent
+    $s1.SetBounds(16, 96, 500, 20)
     $d.Controls.Add($s1)
 
     $s1d = New-MxLabel -Text (@(
-        'They run this once, as Administrator. It turns on Windows remote management and',
-        'prints the computer name and username you will need. They can undo it any time -',
-        'the undo command is at the bottom of the script.'
+        'They right-click Start, pick Terminal (Admin), paste it, press Enter. It turns on',
+        'remote help, creates a helper account with a random password, and prints one code',
+        'straight onto their clipboard. Everything it does is undone by one command it',
+        'prints at the end.'
     ) -join "`r`n") -Size 9 -Color $script:MxDim
-    $s1d.SetBounds(16, 104, 720, 46)
+    $s1d.SetBounds(16, 118, 748, 62)
     $d.Controls.Add($s1d)
 
-    # Next to the app, not in reports\ - that folder is command output, and a
-    # file appearing there looks like stray junk rather than the thing you are
-    # meant to send someone.
     $script:MxPairFile = Join-Path $script:MxWorkDir 'Enable-MatriseHelp.ps1'
-    [void](New-MatrisePairingScript -HelperPc $env:COMPUTERNAME -OutFile $script:MxPairFile)
+    [void](New-MatriseHandshakeScript -HelperPc $env:COMPUTERNAME -HelperUser $env:USERNAME -OutFile $script:MxPairFile)
 
-    # Leave a trace on the board, so it is obvious what happened even if the
-    # dialog opens on another monitor and gets missed.
     Add-MxBoardLine ''
     Add-MxBoardLine '*** Home setup opened. ***'
-    Add-MxBoardLine "    The script for the other PC: $script:MxPairFile"
+    Add-MxBoardLine "    Script for the other PC: $script:MxPairFile"
     Update-MxBoardFlush
 
-    $pathBox = New-MxDlgText -X 16 -Y 156 -W 560 -H 26 -Text $script:MxPairFile -ReadOnly $true
+    $pathBox = New-MxDlgText -X 16 -Y 186 -W 520 -H 26 -Text $script:MxPairFile -ReadOnly $true
     $d.Controls.Add($pathBox)
 
-    $btnSave = New-MxDlgButton -Text 'Open folder' -W 160
-    $btnSave.SetBounds(584, 154, 160, 30)
-    $btnSave.Add_Click({
-        Start-Process explorer.exe "/select,`"$script:MxPairFile`""
-    })
-    $d.Controls.Add($btnSave)
-
-    $btnCopy = New-MxDlgButton -Text 'Copy the script text' -W 180
-    $btnCopy.SetBounds(16, 190, 180, 30)
-    $btnCopy.Add_Click({
+    $btnCopyScript = New-MxDlgButton -Text 'Copy the script' -W 140
+    $btnCopyScript.SetBounds(544, 184, 140, 30)
+    $btnCopyScript.Add_Click({
         $txt = [System.IO.File]::ReadAllText($script:MxPairFile)
         if (Set-MxClipboard $txt) {
             [void][System.Windows.Forms.MessageBox]::Show(
-                "Copied. Send it to them however you like - chat, email, USB stick.`r`n`r`nThey paste it into an Administrator PowerShell window and press Enter.",
+                ("Copied.`r`n`r`nSend it however you normally talk to them - chat, email, USB stick. " +
+                 "They paste it into an Administrator PowerShell window."),
                 'Matrise', 'OK', 'Information')
         }
     })
-    $d.Controls.Add($btnCopy)
+    $d.Controls.Add($btnCopyScript)
 
-    $s2 = New-MxLabel -Text 'STEP 2 - on this PC' -Size 10 -Bold $true -Color $script:MxAccent
-    $s2.SetBounds(16, 236, 500, 20)
+    $btnFolder = New-MxDlgButton -Text 'Folder' -W 76
+    $btnFolder.SetBounds(690, 184, 76, 30)
+    $btnFolder.Add_Click({ Start-Process explorer.exe "/select,`"$script:MxPairFile`"" })
+    $d.Controls.Add($btnFolder)
+
+    # ---------------------------------------------------------------- step 2
+    $s2 = New-MxLabel -Text 'STEP 2 - paste the code they send back' -Size 10 -Bold $true -Color $script:MxAccent
+    $s2.SetBounds(16, 232, 500, 20)
     $d.Controls.Add($s2)
 
     $s2d = New-MxLabel -Text (@(
-        'Windows will not send your password to a machine it does not trust, so hers has to',
-        'be added to this PC''s trusted list. Whatever you put here must match exactly what',
-        'you later type in the Machine box - the list is compared as text, never resolved.',
-        'So a name does not cover her IP, and an IP does not cover her name.'
+        'One long line starting with MX1-. That code is a password: it lets this PC sign in',
+        'to theirs. Send it privately and delete the message afterwards.'
     ) -join "`r`n") -Size 9 -Color $script:MxDim
-    $s2d.SetBounds(16, 254, 728, 60)
+    $s2d.SetBounds(16, 254, 748, 36)
     $d.Controls.Add($s2d)
 
-    $s2e = New-MxLabel -Text (@(
-        'Use the COMPUTER NAME her script printed. Home IP addresses come from the router',
-        'and change; the name does not. You can paste both, separated by a comma, and use',
-        'whichever connects. Never *. Needs Matrise running as Administrator.'
+    $codeBox = New-MxDlgText -X 16 -Y 294 -W 600 -H 54
+    $d.Controls.Add($codeBox)
+
+    $btnPaste = New-MxDlgButton -Text 'Paste' -W 68
+    $btnPaste.SetBounds(624, 294, 68, 26)
+    $btnPaste.Add_Click({
+        try { $codeBox.Text = [System.Windows.Forms.Clipboard]::GetText() } catch { }
+    })
+    $d.Controls.Add($btnPaste)
+
+    $btnPair = New-MxDlgButton -Text 'Pair' -W 68
+    $btnPair.SetBounds(624, 322, 68, 26)
+    $d.Controls.Add($btnPair)
+
+    $pairOut = New-MxDlgText -X 16 -Y 358 -W 748 -H 96 -ReadOnly $true `
+        -Text 'Nothing paired yet. Paste their code above and press Pair.'
+    $d.Controls.Add($pairOut)
+
+    $btnPair.Add_Click({
+        $code = $codeBox.Text
+        if (-not $code.Trim()) { $pairOut.Text = 'Paste their code into the box first.'; return }
+
+        $pairOut.Text = 'Pairing...'
+        $d.Refresh()
+        try {
+            $r = Import-MatrisePairingCode -Code $code
+            $lines = @($r.Steps | ForEach-Object { $(if ($_.Ok) { '  OK    ' } else { '  FAIL  ' }) + $_.Text })
+            $lines += ''
+            $lines += "Ready. Machine box has been set to $($r.HostName) - close this and press Test connection."
+            $pairOut.Text = ($lines -join "`r`n")
+
+            $script:MxTargetBox.Text = $r.HostName
+            $script:MxTarget = New-MatriseTarget -Name $r.HostName -Credential $r.Credential
+            Update-MxTargetLabel
+
+            Add-MxBoardLine ''
+            Add-MxBoardLine "*** Paired with $($r.HostName). ***"
+            foreach ($st in $r.Steps) { Add-MxBoardLine ("    " + $st.Text) }
+            Update-MxBoardFlush
+        }
+        catch {
+            $pairOut.Text = $_.Exception.Message
+        }
+    })
+
+    # ---------------------------------------------------------------- step 3
+    $s3 = New-MxLabel -Text 'STEP 3 - close this and press Test connection' -Size 10 -Bold $true -Color $script:MxAccent
+    $s3.SetBounds(16, 468, 600, 20)
+    $d.Controls.Add($s3)
+
+    $s3d = New-MxLabel -Text (@(
+        'There is nothing else to type. The sign-in is stored on this PC, encrypted so that',
+        'only your Windows account can read it, and it is reused every time from now on.'
     ) -join "`r`n") -Size 9 -Color $script:MxFg
-    $s2e.SetBounds(16, 316, 728, 48)
-    $d.Controls.Add($s2e)
+    $s3d.SetBounds(16, 490, 748, 36)
+    $d.Controls.Add($s3d)
 
-    $nameLbl = New-MxLabel -Text 'Her computer name  (or name, IP)' -Size 9 -Color $script:MxDim
-    $nameLbl.SetBounds(16, 368, 300, 18)
-    $d.Controls.Add($nameLbl)
+    # ------------------------------------------------------------- fallback
+    $s4 = New-MxLabel -Text 'If they cannot run the script' -Size 9 -Bold $true -Color $script:MxDim
+    $s4.SetBounds(16, 536, 500, 18)
+    $d.Controls.Add($s4)
 
-    $nameBox = New-MxDlgText -X 16 -Y 388 -W 300 -H 26 -Text $name
+    $s4d = New-MxLabel -Text (@(
+        'Add their PC by hand, then use Run as... with COMPUTERNAME\theirname and their',
+        'Windows password. Name or IP - whichever you add here must match what you type in',
+        'the Machine box. Never *.'
+    ) -join "`r`n") -Size 9 -Color $script:MxDim
+    $s4d.SetBounds(16, 556, 748, 48)
+    $d.Controls.Add($s4d)
+
+    $nameBox = New-MxDlgText -X 16 -Y 606 -W 280 -H 26
+    if ($Target -and $Target.Mode -eq 'remote') { $nameBox.Text = $Target.Name }
     $d.Controls.Add($nameBox)
 
-    $btnTrust = New-MxDlgButton -Text 'Trust this computer' -W 180
-    $btnTrust.SetBounds(324, 386, 180, 30)
+    $btnTrust = New-MxDlgButton -Text 'Trust by hand' -W 130
+    $btnTrust.SetBounds(304, 604, 130, 30)
     $d.Controls.Add($btnTrust)
 
-    # Called once. It used to be called twice on this line, which doubled the
-    # wait when WinRM was stopped.
     $trusted = Get-MatriseTrustedHosts
-    $trustNow = New-MxDlgText -X 16 -Y 424 -W 728 -H 56 -ReadOnly $true -Text $(
-        if ($null -eq $trusted) {
-            'Windows Remote Management is not running on this PC yet, so the trusted list cannot be read. ' +
-            'Press "Trust this computer" and Matrise will start it for you.'
-        } elseif ($trusted) { "Currently trusted: $trusted" }
-        else { 'Currently trusted: (none)' })
+    $trustNow = New-MxDlgText -X 444 -Y 604 -W 320 -H 30 -ReadOnly $true -Text $(
+        if ($null -eq $trusted) { 'Remote management not running yet' }
+        elseif ($trusted)       { "Trusted: $trusted" }
+        else                    { 'Trusted: (none)' })
     $d.Controls.Add($trustNow)
 
     $btnTrust.Add_Click({
         $n = $nameBox.Text.Trim()
         if (-not $n) { return }
-        $trustNow.Text = "Working on $n ..."
+        $trustNow.Text = 'Working...'
         $d.Refresh()
         try {
             $msg = Add-MatriseTrustedHost -Name $n
-            $now = Get-MatriseTrustedHosts
-            $trustNow.Text = "$msg" + $(if ($null -ne $now) { "`r`n`r`nCurrently trusted: $now" } else { '' })
-        } catch {
-            $trustNow.Text = $_.Exception.Message
-        }
+            $trustNow.Text = $msg
+            $script:MxTargetBox.Text = ($n -split '[,;\s]+')[0]
+        } catch { $trustNow.Text = $_.Exception.Message }
     })
 
-    $s3 = New-MxLabel -Text 'STEP 3 - connect' -Size 10 -Bold $true -Color $script:MxAccent
-    $s3.SetBounds(16, 492, 500, 20)
-    $d.Controls.Add($s3)
-
-    $s3d = New-MxLabel -Text (@(
-        'Put their computer name in the Machine box, press Run as... and enter the username',
-        'and Windows password their script printed, then press Test connection.',
-        '',
-        'If they sign in with a Microsoft account, the username is usually their email',
-        'address and the password is the one they type at startup - not a PIN. A PIN only',
-        'works on the machine itself and cannot be used over the network.'
-    ) -join "`r`n") -Size 9 -Color $script:MxFg
-    $s3d.SetBounds(16, 514, 728, 100)
-    $d.Controls.Add($s3d)
-
     $ok = New-MxDlgButton -Text 'Close' -W 110 -Result 'Cancel'
-    $ok.SetBounds(628, 640, 110, 30)
+    $ok.SetBounds(654, 648, 110, 30)
     $ok.Anchor = 'Bottom, Right'
     $d.Controls.Add($ok)
     $d.CancelButton = $ok
 
-    $d.Add_Shown({
-        Hide-MxPop
-        Show-MxDialogFront -Dialog $d
-    })
-
+    $d.Add_Shown({ Hide-MxPop; Show-MxDialogFront -Dialog $d })
     [void]$d.ShowDialog($script:MxForm)
     $d.Dispose()
 }

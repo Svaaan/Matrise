@@ -940,6 +940,16 @@ function Update-MxInbox {
 function Invoke-MxTestTarget {
     $name = $script:MxTargetBox.Text.Trim()
     $cred = $script:MxTarget.Credential
+
+    # A paired machine already has a sign-in stored, so nobody should have to
+    # type it again.
+    if (-not $cred -and $name) {
+        $saved = Get-MatrisePeerCredential -HostName $name
+        if ($saved) {
+            $cred = $saved
+            $script:MxStatus.Text = "using the saved sign-in for $name"
+        }
+    }
     $script:MxTarget = New-MatriseTarget -Name $name -Credential $cred
 
     if ($script:MxTarget.Mode -eq 'local') {
@@ -1170,6 +1180,53 @@ function Invoke-MxSelfTestPhase1 {
     }
     catch {
         Write-MxCheck 'target actions' $false $_.Exception.Message
+    }
+
+    # The one-code handshake: the script the other PC runs must produce a code
+    # this PC can read, and the sign-in must survive a save/load without ever
+    # sitting on disk in the clear.
+    try {
+        $fakePw = New-MatriseCodePassword
+        $fakeCode = ConvertTo-MatrisePairingCode -Payload @{
+            v = 1; h = 'MX-SELFTEST-PC'; i = @('10.0.0.9'); u = 'MatriseHelp'
+            p = $fakePw; t = (Get-Date).ToUniversalTime().ToString('o')
+        }
+        # Pasted codes arrive wrapped and padded by chat clients.
+        $messy = $fakeCode.Insert(30, "`r`n  ")
+        $decoded = ConvertFrom-MatrisePairingCode -Code $messy
+        Write-MxCheck 'pairing code' (($decoded.HostName -eq 'MX-SELFTEST-PC') -and ($decoded.Password -eq $fakePw)) `
+            "$($fakeCode.Length)-char code survives being pasted with line breaks"
+
+        $sec = ConvertTo-SecureString $fakePw -AsPlainText -Force
+        $c = New-Object System.Management.Automation.PSCredential('MX-SELFTEST-PC\MatriseHelp', $sec)
+        $cf = Save-MatrisePeerCredential -HostName 'MX-SELFTEST-PC' -Credential $c
+        $back = Get-MatrisePeerCredential -HostName 'MX-SELFTEST-PC'
+        $onDisk = [System.IO.File]::ReadAllText($cf)
+        Write-MxCheck 'saved sign-in' `
+            (($back.GetNetworkCredential().Password -eq $fakePw) -and ($onDisk -notlike "*$fakePw*")) `
+            'restores correctly and the password is not readable in the file'
+        [void](Remove-MatrisePeerCredential -HostName 'MX-SELFTEST-PC')
+    }
+    catch {
+        Write-MxCheck 'pairing code' $false $_.Exception.Message
+    }
+
+    # The script the other person runs is generated, so it has to be checked
+    # like any other code - a syntax error there is discovered by a stranger.
+    try {
+        $tmpS = Join-Path ([System.IO.Path]::GetTempPath()) ("mx-hs-{0}.ps1" -f ([guid]::NewGuid().ToString('N').Substring(0,6)))
+        [void](New-MatriseHandshakeScript -HelperPc 'TEST-PC' -HelperUser 'tester' -OutFile $tmpS)
+        $perr = $null
+        [void][System.Management.Automation.Language.Parser]::ParseFile($tmpS, [ref]$null, [ref]$perr)
+        $body = [System.IO.File]::ReadAllText($tmpS)
+        $hasUndo = ($body -match 'Remove-LocalUser') -and ($body -match 'Disable-PSRemoting') -and
+                   ($body -match 'LocalAccountTokenFilterPolicy')
+        Write-MxCheck 'handshake script' ((@($perr).Count -eq 0) -and $hasUndo) `
+            "$([math]::Round((Get-Item $tmpS).Length/1KB,1))KB, parses, and every change it makes is in the undo"
+        Remove-Item $tmpS -Force -ErrorAction SilentlyContinue
+    }
+    catch {
+        Write-MxCheck 'handshake script' $false $_.Exception.Message
     }
 
     # Reading the trusted list must never sit on the UI thread waiting for a
@@ -1724,14 +1781,54 @@ function Show-MatriseWindow {
     $tbar.Controls.Add($btnConnect)
 
     $btnCred = New-MxButton -Text 'Run as...' -Width 88 -Tip (Get-MatriseTip 'ui.runas') -OnClick {
+        $machine = $script:MxTargetBox.Text.Trim()
+        if (-not $machine) {
+            [void][System.Windows.Forms.MessageBox]::Show(
+                ("Put the other PC's name in the Machine box first.`r`n`r`n" +
+                 'These credentials are for THAT machine, so Matrise needs to know which one.'),
+                'Matrise - which machine?', 'OK', 'Information')
+            return
+        }
+
+        # Windows only labels the boxes "User name" and "Password". Everything
+        # that actually goes wrong here - whose account, which format, and the
+        # PIN - has to be said before the dialog opens.
+        $msg = @(
+            "Sign in to $machine.",
+            '',
+            'This is an account ON THAT MACHINE, not yours.',
+            '',
+            "User name:  $machine\theirusername",
+            '            (the name their setup script printed, with the computer',
+            '             name in front - that prefix matters on a home network)',
+            '',
+            'Password:   their Windows sign-in password.',
+            '',
+            'If they sign in with a Microsoft account it is the Microsoft account',
+            'password, NOT their PIN. A PIN only works on the machine itself and',
+            'cannot be used over a network.',
+            '',
+            'The account must be an Administrator on that PC, or a member of',
+            'Remote Management Users, or the connection is refused.'
+        ) -join "`r`n"
+
         $c = $null
-        try {
-            $c = Get-Credential -Message 'Credentials to connect to the target machine'
-        } catch { }
-        if ($c) {
-            $script:MxTarget = New-MatriseTarget -Name $script:MxTargetBox.Text -Credential $c
-            Update-MxTargetLabel
-            $script:MxStatus.Text = "will connect as $($c.UserName)"
+        try { $c = Get-Credential -Message $msg -UserName "$machine\" } catch { }
+        if (-not $c) { $script:MxStatus.Text = 'no credentials set'; return }
+
+        $script:MxTarget = New-MatriseTarget -Name $machine -Credential $c
+        Update-MxTargetLabel
+        $script:MxStatus.Text = "will connect as $($c.UserName)"
+
+        # A bare username with no authority in front is the single most common
+        # reason this comes back "Access is denied" on a workgroup machine.
+        $u = $c.UserName
+        if (($u -notmatch '\\') -and ($u -notmatch '@')) {
+            Add-MxBoardLine ''
+            Add-MxBoardLine "*** Heads up: the user name '$u' has no computer name in front of it. ***"
+            Add-MxBoardLine "    On a home network that usually comes back as 'Access is denied'."
+            Add-MxBoardLine "    Try $machine\$u instead if this connection is refused."
+            Update-MxBoardFlush
         }
     }
     $btnCred.Location = New-Object System.Drawing.Point(494, 5)

@@ -256,12 +256,27 @@ function Add-MatriseTrustedHost {
     $started = ''
     if (-not (Test-MatriseWinRmRunning)) {
         # The trusted list lives in WinRM's own configuration, so the service
-        # has to be running to edit it. This is the client half only - it does
-        # not open a listener or let anything connect to this PC.
+        # has to be running to edit it.
+        #
+        # Do NOT tell the user this is "client side only". Windows frequently
+        # ships with a listener already configured but dormant, and starting
+        # the service activates it - so this PC can begin accepting inbound
+        # remote management as a side effect. Check what actually happened and
+        # report that, instead of reassuring them about something unverified.
+        # The startup type is deliberately left alone: making it Automatic is a
+        # permanent change nobody asked for.
         try {
             Start-Service WinRM -ErrorAction Stop
-            Set-Service WinRM -StartupType Automatic -ErrorAction SilentlyContinue
-            $started = "Started the Windows Remote Management service on this PC (client side only - nothing can connect in). "
+            $ports = @(Get-NetTCPConnection -LocalPort 5985, 5986 -State Listen -ErrorAction SilentlyContinue |
+                       Select-Object -ExpandProperty LocalPort -Unique)
+            if ($ports) {
+                $started = "Started Windows Remote Management. NOTE: this PC is now ALSO accepting inbound " +
+                           "connections on port $($ports -join '/') - Windows already had a listener configured " +
+                           "and starting the service activated it. To close it again: Disable-PSRemoting -Force " +
+                           "then Stop-Service WinRM. "
+            } else {
+                $started = "Started Windows Remote Management (outbound only - nothing is listening for inbound connections). "
+            }
         }
         catch {
             throw ("The Windows Remote Management service could not be started, so the trusted list cannot be edited.`
