@@ -1307,6 +1307,16 @@ function Invoke-MxSelfTestPhase1 {
         Write-MxCheck 'handshake script' $false $_.Exception.Message
     }
 
+    # The remote-setup push must refuse a LOCAL target - it should never create
+    # an admin account on your own machine by mistake.
+    try {
+        $localT = New-MatriseTarget
+        $refused = $false
+        try { Push-MatriseHostSetup -Target $localT | Out-Null } catch { $refused = $true }
+        Write-MxCheck 'push-setup guard' $refused 'refuses to run against this PC (remote only)'
+    }
+    catch { Write-MxCheck 'push-setup guard' $false $_.Exception.Message }
+
     # Guest auto-connect: with one host offering it should start a countdown,
     # and cancelling must stop the timer and restore the button. Exercised on
     # mock controls so no live host is needed.

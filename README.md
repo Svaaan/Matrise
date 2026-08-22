@@ -459,6 +459,25 @@ commands, so a typed command is not a way around any of them.
 
 
 ---
+## Automating setup, and what cannot be automated
+
+First contact with a machine cannot be automated away: something must run there,
+once, as administrator, to switch on remote management. Windows forbids doing
+that remotely on purpose - if a PC could enable remote access to itself at a
+stranger's request, that would be the hole. That step is the consent.
+
+On the same network it is still nearly one-touch: **Host me** on their side,
+**Find a PC** on yours - no script, no code to paste. The Home setup script is
+only the fallback for when you cannot both be on the network at the same time.
+
+Everything *after* first contact is pushed from your side over the connection
+you already have. **Home setup > Refresh this PC now** re-runs the whole
+host-side setup on a connected machine - rotates the helper account's password,
+re-grants its rights by well-known SID, re-enables remoting, resets the token
+policy - with no script sent and nothing pasted, then saves the new sign-in
+locally. Use it to repair a peer whose connection has started being refused.
+
+---
 ## Tamper-evident audit log
 
 Every action - run, refusal, request, approval - is written to an append-only

@@ -156,25 +156,70 @@ function Show-MxHomeSetup {
     $d = New-Object System.Windows.Forms.Form
     $d.Text = 'Matrise - help another PC in this house'
     $d.StartPosition = 'CenterParent'
-    $d.ClientSize = New-Object System.Drawing.Size(780, 700)
-    $d.MinimumSize = New-Object System.Drawing.Size(720, 620)
+    $d.ClientSize = New-Object System.Drawing.Size(780, 760)
+    $d.MinimumSize = New-Object System.Drawing.Size(720, 680)
     $d.BackColor = $script:MxBg; $d.ForeColor = $script:MxFg
 
-    $title = New-MxLabel -Text 'They run one script. They send you one code. Done.' -Size 12 -Bold $true
-    $title.SetBounds(16, 12, 740, 24)
+    $onRemote = ($Target -and $Target.Mode -eq 'remote')
+
+    $title = New-MxLabel -Text 'Connecting to another PC' -Size 12 -Bold $true
+    $title.SetBounds(16, 12, 560, 24)
     $d.Controls.Add($title)
 
+    # Lead with the automated paths - most people never need the script below.
     $intro = New-MxLabel -Text (@(
-        'Windows will not let one PC switch on remote help for another - that would be the',
-        'security hole. So something has to run once on their machine, with their consent.',
-        'After that, nothing needs typing: the code carries everything.'
+        'Easiest, if you are both on the same network right now:',
+        '   - they press  Host me  ,  you press  Find a PC  - nothing is typed or sent.',
+        '',
+        'The script below is only for when you cannot do that (different times, off',
+        'network). Windows will not let one PC switch on remote help for another, so',
+        'this one step has to run there, with their consent. After it, nothing else',
+        'needs typing.'
     ) -join "`r`n") -Size 9 -Color $script:MxDim
-    $intro.SetBounds(16, 40, 748, 50)
+    $intro.SetBounds(16, 40, 748, 96)
     $d.Controls.Add($intro)
+
+    # Already connected? Push the whole setup over that connection - no script.
+    $btnRefresh = New-MxDlgButton -Text 'Refresh this PC now' -W 168
+    $btnRefresh.SetBounds(596, 12, 168, 30)
+    $btnRefresh.Enabled = $onRemote
+    if ($onRemote) { $btnRefresh.ForeColor = [System.Drawing.Color]::FromArgb(124, 222, 146) }
+    Register-MxHover -Control $btnRefresh -Text $(if ($onRemote) {
+        "Re-runs setup on $($Target.Name) over the connection you already have - rotates the helper account's password, re-grants rights, re-enables remoting. No script, no paste."
+    } else { 'Connect to a PC first; then this refreshes it with no script.' })
+    $btnRefresh.Add_Click({
+        $r = [System.Windows.Forms.MessageBox]::Show(
+            ("Refresh setup on $($Target.Name) over the current connection?`r`n`r`n" +
+             "This rotates the helper account's password and re-applies its rights. " +
+             "Use it if the connection has started being refused."),
+            'Matrise - refresh remote setup', 'YesNo', 'Question')
+        if ($r -ne 'Yes') { return }
+        $btnRefresh.Enabled = $false; $btnRefresh.Text = 'Working...'; $d.Refresh()
+        Add-MxBoardLine ''
+        Add-MxBoardLine "*** Refreshing setup on $($Target.Name) (no script - over the live connection)... ***"
+        Update-MxBoardFlush
+        try {
+            $res = Push-MatriseHostSetup -Target $script:MxTarget
+            foreach ($s in $res.Steps) { Add-MxBoardLine ("    " + $(if ($s.Ok) { 'ok   ' } else { 'FAIL ' }) + $s.Text) }
+            Add-MxBoardLine ("    result: " + $(if ($res.Ok) { 'ready - the saved sign-in was refreshed' } else { 'did not complete - see above' }))
+            Update-MxBoardFlush
+            [void][System.Windows.Forms.MessageBox]::Show(
+                $(if ($res.Ok) { "$($Target.Name) refreshed. The new sign-in is saved - press Test connection." }
+                  else { "Refresh did not complete. See the board for which step failed." }),
+                'Matrise', 'OK', $(if ($res.Ok) { 'Information' } else { 'Warning' }))
+        }
+        catch {
+            Add-MxBoardLine ("    FAIL " + $_.Exception.Message)
+            Update-MxBoardFlush
+            [void][System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Matrise - could not refresh', 'OK', 'Error')
+        }
+        $btnRefresh.Text = 'Refresh this PC now'; $btnRefresh.Enabled = $onRemote
+    })
+    $d.Controls.Add($btnRefresh)
 
     # ---------------------------------------------------------------- step 1
     $s1 = New-MxLabel -Text 'STEP 1 - send them this script' -Size 10 -Bold $true -Color $script:MxAccent
-    $s1.SetBounds(16, 96, 500, 20)
+    $s1.SetBounds(16, 146, 500, 20)
     $d.Controls.Add($s1)
 
     $s1d = New-MxLabel -Text (@(
@@ -183,7 +228,7 @@ function Show-MxHomeSetup {
         'straight onto their clipboard. Everything it does is undone by one command it',
         'prints at the end.'
     ) -join "`r`n") -Size 9 -Color $script:MxDim
-    $s1d.SetBounds(16, 118, 748, 62)
+    $s1d.SetBounds(16, 168, 748, 62)
     $d.Controls.Add($s1d)
 
     # The script is NOT written here. Writing a file that creates an admin
@@ -197,7 +242,7 @@ function Show-MxHomeSetup {
     $d.Controls.Add($pathBox)
 
     $btnCopyScript = New-MxDlgButton -Text 'Copy the script' -W 140
-    $btnCopyScript.SetBounds(544, 184, 140, 30)
+    $btnCopyScript.SetBounds(544, 234, 140, 30)
     $btnCopyScript.Add_Click({
         $txt = [System.IO.File]::ReadAllText($script:MxPairFile)
         if (Set-MxClipboard $txt) {
@@ -210,34 +255,34 @@ function Show-MxHomeSetup {
     $d.Controls.Add($btnCopyScript)
 
     $btnFolder = New-MxDlgButton -Text 'Folder' -W 76
-    $btnFolder.SetBounds(690, 184, 76, 30)
+    $btnFolder.SetBounds(690, 234, 76, 30)
     $btnFolder.Add_Click({ Start-Process explorer.exe "/select,`"$script:MxPairFile`"" })
     $d.Controls.Add($btnFolder)
 
     # ---------------------------------------------------------------- step 2
     $s2 = New-MxLabel -Text 'STEP 2 - paste the code they send back' -Size 10 -Bold $true -Color $script:MxAccent
-    $s2.SetBounds(16, 232, 500, 20)
+    $s2.SetBounds(16, 282, 500, 20)
     $d.Controls.Add($s2)
 
     $s2d = New-MxLabel -Text (@(
         'One long line starting with MX1-. That code is a password: it lets this PC sign in',
         'to theirs. Send it privately and delete the message afterwards.'
     ) -join "`r`n") -Size 9 -Color $script:MxDim
-    $s2d.SetBounds(16, 254, 748, 36)
+    $s2d.SetBounds(16, 304, 748, 36)
     $d.Controls.Add($s2d)
 
     $codeBox = New-MxDlgText -X 16 -Y 294 -W 600 -H 54
     $d.Controls.Add($codeBox)
 
     $btnPaste = New-MxDlgButton -Text 'Paste' -W 68
-    $btnPaste.SetBounds(624, 294, 68, 26)
+    $btnPaste.SetBounds(624, 344, 68, 26)
     $btnPaste.Add_Click({
         try { $codeBox.Text = [System.Windows.Forms.Clipboard]::GetText() } catch { }
     })
     $d.Controls.Add($btnPaste)
 
     $btnPair = New-MxDlgButton -Text 'Pair' -W 68
-    $btnPair.SetBounds(624, 322, 68, 26)
+    $btnPair.SetBounds(624, 372, 68, 26)
     $d.Controls.Add($btnPair)
 
     $pairOut = New-MxDlgText -X 16 -Y 358 -W 748 -H 96 -ReadOnly $true `
@@ -273,19 +318,19 @@ function Show-MxHomeSetup {
 
     # ---------------------------------------------------------------- step 3
     $s3 = New-MxLabel -Text 'STEP 3 - close this and press Test connection' -Size 10 -Bold $true -Color $script:MxAccent
-    $s3.SetBounds(16, 468, 600, 20)
+    $s3.SetBounds(16, 518, 600, 20)
     $d.Controls.Add($s3)
 
     $s3d = New-MxLabel -Text (@(
         'There is nothing else to type. The sign-in is stored on this PC, encrypted so that',
         'only your Windows account can read it, and it is reused every time from now on.'
     ) -join "`r`n") -Size 9 -Color $script:MxFg
-    $s3d.SetBounds(16, 490, 748, 36)
+    $s3d.SetBounds(16, 540, 748, 36)
     $d.Controls.Add($s3d)
 
     # ------------------------------------------------------------- fallback
     $s4 = New-MxLabel -Text 'If they cannot run the script' -Size 9 -Bold $true -Color $script:MxDim
-    $s4.SetBounds(16, 536, 500, 18)
+    $s4.SetBounds(16, 586, 500, 18)
     $d.Controls.Add($s4)
 
     $s4d = New-MxLabel -Text (@(
@@ -293,7 +338,7 @@ function Show-MxHomeSetup {
         'Windows password. Name or IP - whichever you add here must match what you type in',
         'the Machine box. Never *.'
     ) -join "`r`n") -Size 9 -Color $script:MxDim
-    $s4d.SetBounds(16, 556, 748, 48)
+    $s4d.SetBounds(16, 606, 748, 48)
     $d.Controls.Add($s4d)
 
     $nameBox = New-MxDlgText -X 16 -Y 606 -W 280 -H 26
@@ -301,7 +346,7 @@ function Show-MxHomeSetup {
     $d.Controls.Add($nameBox)
 
     $btnTrust = New-MxDlgButton -Text 'Trust by hand' -W 130
-    $btnTrust.SetBounds(304, 604, 130, 30)
+    $btnTrust.SetBounds(304, 654, 130, 30)
     $d.Controls.Add($btnTrust)
 
     # Also deferred - reading this asks the WinRM service, which is not
@@ -322,7 +367,7 @@ function Show-MxHomeSetup {
     })
 
     $ok = New-MxDlgButton -Text 'Close' -W 110 -Result 'Cancel'
-    $ok.SetBounds(654, 648, 110, 30)
+    $ok.SetBounds(654, 698, 110, 30)
     $ok.Anchor = 'Bottom, Right'
     $d.Controls.Add($ok)
     $d.CancelButton = $ok

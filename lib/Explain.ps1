@@ -454,7 +454,7 @@ function Get-MatriseExplainTable {
         'The code is a password in disguise - anyone who has it can sign in to their PC. Send it privately and delete the message afterwards.'
 
     & $e 'ui.homesetup' `
-        'Sets up help between two PCs in a house, where there is no company network to arrange it for you.' `
+        'Sets up help between two PCs in a house. If you are both on the same network, Find a PC and Host me do it with no script at all; the script here is the fallback for off-network. Already connected? It can refresh a machine over the live link.' `
         'They run one script, they send you one code, you paste it. Nothing else needs typing.'
 
     & $e 'ui.guest' `

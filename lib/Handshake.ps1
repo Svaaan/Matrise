@@ -97,6 +97,89 @@ function ConvertTo-MatrisePairingCode {
     'MX1-' + [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($json))
 }
 
+# Pushes the whole host-side setup onto a machine you are ALREADY connected to,
+# over the existing WinRM channel - no script to send, nothing to paste. Used
+# to repair or refresh a peer from your side: rotates the helper account's
+# password, re-grants rights by SID, re-enables remoting, resets the token
+# policy. The new password is generated on the far end and returned encrypted
+# by WinRM, then saved locally so the next connect just works.
+#
+# It cannot bootstrap a machine with no connection - that first step must be run
+# there, with consent. This is for machines already paired.
+function Push-MatriseHostSetup {
+    param($Target, [string]$Account = 'MatriseHelp')
+
+    if (-not $Target -or $Target.Mode -ne 'remote') {
+        throw 'This refreshes a REMOTE machine. Point Matrise at one and connect first.'
+    }
+
+    # Self-contained: the far end has stock PowerShell only, so everything the
+    # setup needs is inside this block.
+    $sb = {
+        param($acct, $desc)
+        $steps = New-Object System.Collections.ArrayList
+        $add = { param($ok, $t) [void]$steps.Add([pscustomobject]@{ Ok = $ok; Text = $t }) }
+
+        $alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789+-'
+        $bytes = New-Object byte[] 24
+        $rng = [System.Security.Cryptography.RNGCryptoServiceProvider]::Create()
+        try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
+        $plain = -join ($bytes | ForEach-Object { $alphabet[$_ % $alphabet.Length] })
+        $sec = ConvertTo-SecureString $plain -AsPlainText -Force
+
+        try {
+            if (Get-LocalUser -Name $acct -ErrorAction SilentlyContinue) {
+                Set-LocalUser -Name $acct -Password $sec
+                Enable-LocalUser -Name $acct -ErrorAction SilentlyContinue
+                & $add $true "refreshed $acct with a new password"
+            } else {
+                New-LocalUser -Name $acct -Password $sec -FullName 'Matrise remote help' `
+                    -Description $desc -PasswordNeverExpires -AccountNeverExpires | Out-Null
+                & $add $true "created $acct"
+            }
+        }
+        catch { & $add $false "account: $($_.Exception.Message)"; return @{ Ok=$false; Steps=$steps; Password='' } }
+
+        foreach ($sid in @('S-1-5-32-544', 'S-1-5-32-580')) {
+            $g = $null
+            try { $g = Get-LocalGroup -SID $sid -ErrorAction Stop } catch { }
+            if (-not $g) { continue }
+            try { Add-LocalGroupMember -Group $g -Member $acct -ErrorAction Stop; & $add $true "added to $($g.Name)" }
+            catch { & $add $true "already in $($g.Name)" }
+        }
+        $ga = Get-LocalGroup -SID 'S-1-5-32-544'
+        $isAdmin = @(Get-LocalGroupMember -Group $ga | Where-Object { $_.Name -like "*\$acct" }).Count -gt 0
+        if (-not $isAdmin) { & $add $false "$acct is NOT an administrator"; return @{ Ok=$false; Steps=$steps; Password='' } }
+        & $add $true "$acct is an administrator"
+
+        try {
+            $k = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
+            New-ItemProperty -Path $k -Name LocalAccountTokenFilterPolicy -Value 1 -PropertyType DWord -Force | Out-Null
+            & $add $true 'remote-administration policy set'
+        } catch { & $add $false "token policy: $($_.Exception.Message)" }
+
+        try { Enable-PSRemoting -Force -SkipNetworkProfileCheck -ErrorAction Stop | Out-Null; & $add $true 'remote management on' }
+        catch { & $add $true 'remote management already on' }
+
+        @{ Ok = $true; Steps = $steps; Password = $plain }
+    }
+
+    $icm = @{ ComputerName = $Target.Name; ErrorAction = 'Stop'; ScriptBlock = $sb
+             ArgumentList = @($Account, $script:MatriseHelperDesc) }
+    if ($Target.Credential) { $icm['Credential'] = $Target.Credential; $icm['Authentication'] = 'Negotiate' }
+    if ($Target.UseSsl)     { $icm['UseSSL'] = $true }
+
+    $r = Invoke-Command @icm
+
+    if ($r.Ok -and $r.Password) {
+        $sec  = ConvertTo-SecureString ([string]$r.Password) -AsPlainText -Force
+        $cred = New-Object System.Management.Automation.PSCredential("$($Target.Name)\$Account", $sec)
+        [void](Save-MatrisePeerCredential -HostName $Target.Name -Credential $cred)
+        $Target.Credential = $cred   # keep the live session using the new password
+    }
+    [pscustomobject]@{ Ok = [bool]$r.Ok; Steps = @($r.Steps) }
+}
+
 function ConvertFrom-MatrisePairingCode {
     param([string]$Code)
 
