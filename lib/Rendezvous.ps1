@@ -272,10 +272,15 @@ function Initialize-MatriseHostSide {
                 -PasswordNeverExpires -AccountNeverExpires | Out-Null
             & $add $true "Created the $Account account."
         }
-        Add-LocalGroupMember -Group 'Administrators' -Member $Account -ErrorAction SilentlyContinue
     }
     catch {
         & $add $false ("Could not create the helper account: " + $_.Exception.Message)
+        return [pscustomobject]@{ Ok = $false; Steps = $steps; Password = ''; Account = $Account }
+    }
+
+    $rights = Grant-MatriseHelperRights -Account $Account
+    foreach ($s in $rights.Steps) { & $add $s.Ok $s.Text }
+    if (-not $rights.Ok) {
         return [pscustomobject]@{ Ok = $false; Steps = $steps; Password = ''; Account = $Account }
     }
 

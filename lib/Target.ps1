@@ -131,8 +131,14 @@ function Test-MatriseTarget {
     # --- WinRM handshake + authentication ---------------------------------
     try {
         $p = @{ ComputerName = $Target.Name; ErrorAction = 'Stop' }
-        if ($Target.Credential) { $p['Credential'] = $Target.Credential }
-        if ($Target.UseSsl)     { $p['UseSSL'] = $true }
+        if ($Target.Credential) {
+            $p['Credential'] = $Target.Credential
+            # Test-WSMan defaults -Authentication to None, and None plus a
+            # credential is a hard error rather than a fallback. Negotiate is
+            # what actually gets used between PCs that are not in a domain.
+            $p['Authentication'] = 'Negotiate'
+        }
+        if ($Target.UseSsl) { $p['UseSSL'] = $true }
         Test-WSMan @p | Out-Null
         & $add $true 'winrm-auth' 'WinRM responded and accepted the credentials.'
         $Target.Status = 'ok'

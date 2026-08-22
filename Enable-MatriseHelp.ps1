@@ -52,7 +52,30 @@ if (Get-LocalUser -Name $acct -ErrorAction SilentlyContinue) {
         -PasswordNeverExpires -AccountNeverExpires | Out-Null
     Write-Host "   created $acct"
 }
-Add-LocalGroupMember -Group "Administrators" -Member $acct -ErrorAction SilentlyContinue
+# Group names are localised - "Administrators" does not exist on a
+# Swedish or German Windows. Well-known SIDs are the same everywhere.
+$granted = $false
+foreach ($sid in @("S-1-5-32-544", "S-1-5-32-580")) {
+    $g = $null
+    try { $g = Get-LocalGroup -SID $sid -ErrorAction Stop } catch { }
+    if (-not $g) { Write-Host "   group $sid not present - skipping" -ForegroundColor Yellow; continue }
+    try {
+        Add-LocalGroupMember -Group $g -Member $acct -ErrorAction Stop
+        Write-Host "   added to $($g.Name)"
+    } catch {
+        Write-Host "   already in or could not add to $($g.Name)"
+    }
+}
+$ga = Get-LocalGroup -SID "S-1-5-32-544"
+$granted = @(Get-LocalGroupMember -Group $ga | Where-Object { $_.Name -like "*\\$acct" }).Count -gt 0
+if ($granted) {
+    Write-Host "   verified: $acct is an administrator" -ForegroundColor Green
+} else {
+    Write-Host "   PROBLEM: $acct is NOT an administrator." -ForegroundColor Red
+    Write-Host "   The other PC will be refused. Stopping." -ForegroundColor Red
+    Read-Host "Press Enter to close"
+    return
+}
 Write-Host "   done" -ForegroundColor Green
 
 Write-Host ""

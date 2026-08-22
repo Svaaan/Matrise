@@ -33,6 +33,72 @@ $script:MatriseHelperAccount = 'MatriseHelp'
 # or past the limit.
 $script:MatriseHelperDesc = 'Matrise remote help - safe to delete'
 
+# Granting the rights is the step that decides whether the other PC can connect
+# at all, so it is never silenced and always verified afterwards.
+#
+# Group names are LOCALISED. On a Swedish Windows the administrators group is
+# "Administratorer", on a German one "Administratoren" - asking for
+# "Administrators" by name simply fails there. Well-known SIDs are identical on
+# every installation, so that is what this uses.
+function Grant-MatriseHelperRights {
+    param([Parameter(Mandatory)] [string]$Account)
+
+    $steps = New-Object System.Collections.ArrayList
+    $add = { param($ok, $t) [void]$steps.Add([pscustomobject]@{ Ok = $ok; Text = $t }) }
+
+    $wanted = @(
+        @{ Sid = 'S-1-5-32-544'; What = 'Administrators' },
+        @{ Sid = 'S-1-5-32-580'; What = 'Remote Management Users' }
+    )
+
+    foreach ($w in $wanted) {
+        $g = $null
+        try { $g = Get-LocalGroup -SID $w.Sid -ErrorAction Stop } catch { }
+        if (-not $g) {
+            & $add $false "the $($w.What) group does not exist on this PC ($($w.Sid))"
+            continue
+        }
+
+        $already = $false
+        try {
+            $already = @(Get-LocalGroupMember -Group $g -ErrorAction Stop |
+                         Where-Object { $_.Name -like "*\$Account" -or $_.Name -eq $Account }).Count -gt 0
+        } catch { }
+
+        if ($already) { & $add $true "already in $($g.Name)"; continue }
+        try {
+            Add-LocalGroupMember -Group $g -Member $Account -ErrorAction Stop
+            & $add $true "added to $($g.Name)"
+        }
+        catch {
+            & $add $false "could not add to $($g.Name): $($_.Exception.Message)"
+        }
+    }
+
+    # Verify rather than assume. Administrators membership is what WinRM checks.
+    $isAdmin = $false
+    try {
+        $ga = Get-LocalGroup -SID 'S-1-5-32-544' -ErrorAction Stop
+        $isAdmin = @(Get-LocalGroupMember -Group $ga -ErrorAction Stop |
+                     Where-Object { $_.Name -like "*\$Account" -or $_.Name -eq $Account }).Count -gt 0
+    } catch { }
+    if ($isAdmin) { & $add $true "VERIFIED: $Account is an administrator" }
+    else          { & $add $false "VERIFY FAILED: $Account is NOT an administrator - the other PC will be refused" }
+
+    try {
+        $u = Get-LocalUser -Name $Account -ErrorAction Stop
+        if (-not $u.Enabled) {
+            Enable-LocalUser -Name $Account -ErrorAction Stop
+            & $add $true 'the account was disabled - enabled it'
+        } else {
+            & $add $true 'the account is enabled'
+        }
+    }
+    catch { & $add $false "could not confirm the account is enabled: $($_.Exception.Message)" }
+
+    [pscustomobject]@{ Ok = $isAdmin; Steps = $steps }
+}
+
 function New-MatriseCodePassword {
     param([int]$Length = 24)
     # Ambiguous characters left out so a code read aloud or retyped still works.
@@ -178,7 +244,30 @@ function New-MatriseHandshakeScript {
         '        -PasswordNeverExpires -AccountNeverExpires | Out-Null',
         '    Write-Host "   created $acct"',
         '}',
-        'Add-LocalGroupMember -Group "Administrators" -Member $acct -ErrorAction SilentlyContinue',
+        '# Group names are localised - "Administrators" does not exist on a',
+        '# Swedish or German Windows. Well-known SIDs are the same everywhere.',
+        '$granted = $false',
+        'foreach ($sid in @("S-1-5-32-544", "S-1-5-32-580")) {',
+        '    $g = $null',
+        '    try { $g = Get-LocalGroup -SID $sid -ErrorAction Stop } catch { }',
+        '    if (-not $g) { Write-Host "   group $sid not present - skipping" -ForegroundColor Yellow; continue }',
+        '    try {',
+        '        Add-LocalGroupMember -Group $g -Member $acct -ErrorAction Stop',
+        '        Write-Host "   added to $($g.Name)"',
+        '    } catch {',
+        '        Write-Host "   already in or could not add to $($g.Name)"',
+        '    }',
+        '}',
+        '$ga = Get-LocalGroup -SID "S-1-5-32-544"',
+        '$granted = @(Get-LocalGroupMember -Group $ga | Where-Object { $_.Name -like "*\\$acct" }).Count -gt 0',
+        'if ($granted) {',
+        '    Write-Host "   verified: $acct is an administrator" -ForegroundColor Green',
+        '} else {',
+        '    Write-Host "   PROBLEM: $acct is NOT an administrator." -ForegroundColor Red',
+        '    Write-Host "   The other PC will be refused. Stopping." -ForegroundColor Red',
+        '    Read-Host "Press Enter to close"',
+        '    return',
+        '}',
         'Write-Host "   done" -ForegroundColor Green',
         '',
         'Write-Host ""',
