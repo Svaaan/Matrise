@@ -27,7 +27,7 @@ function Show-MxHostingChooser {
     $c.StartPosition = 'CenterParent'
     $c.FormBorderStyle = 'FixedDialog'
     $c.MinimizeBox = $false; $c.MaximizeBox = $false
-    $c.ClientSize = New-Object System.Drawing.Size(520, 300)
+    $c.ClientSize = New-Object System.Drawing.Size(520, 384)
     $c.BackColor = $script:MxBg; $c.ForeColor = $script:MxFg
 
     $c.Controls.Add((New-MxRvLabel 'Connect this PC to another' 20 18 480 26 13 $true))
@@ -50,8 +50,23 @@ function Show-MxHostingChooser {
     $c.Controls.Add($bHost)
     $c.Controls.Add((New-MxRvLabel 'Make this PC visible so someone you trust can connect and help.' 24 220 470 18 9 $false $script:MxDim))
 
+    # Divider, then the quieter fallback path - off-network setup and repair.
+    $div = New-Object System.Windows.Forms.Label
+    $div.SetBounds(20, 250, 480, 1); $div.BackColor = [System.Drawing.Color]::FromArgb(60, 66, 78)
+    $c.Controls.Add($div)
+
+    # Off-network / repair = Home setup. De-emphasised: most people use the two
+    # above; this is for when you cannot both be on the network at once, or to
+    # repair a connection that has started being refused.
+    $bHome = New-MxDlgButton -Text 'Set up off-network, or repair a connection...' -W 480
+    $bHome.SetBounds(20, 264, 480, 34)
+    $bHome.ForeColor = $script:MxDim
+    $bHome.Add_Click({ $script:MxHostingChoice = 'home'; $c.Close() })
+    $c.Controls.Add($bHome)
+    $c.Controls.Add((New-MxRvLabel 'Send a one-time script (for when you are not on the same network), or push setup again to fix a refused connection.' 24 300 476 34 9 $false $script:MxDim))
+
     $bClose = New-MxDlgButton -Text 'Close' -W 100 -Result 'Cancel'
-    $bClose.SetBounds(400, 254, 100, 30); $bClose.Anchor = 'Bottom, Right'
+    $bClose.SetBounds(400, 340, 100, 30); $bClose.Anchor = 'Bottom, Right'
     $c.Controls.Add($bClose)
     $c.CancelButton = $bClose
 
@@ -62,6 +77,7 @@ function Show-MxHostingChooser {
     switch ($script:MxHostingChoice) {
         'guest' { Write-MxTiming 'Guest window opened'; Show-MxGuestWindow }
         'host'  { Write-MxTiming 'Host window opened';  Show-MxHostWindow }
+        'home'  { Write-MxTiming 'Home setup opened';   Show-MxHomeSetup -Target $script:MxTarget }
     }
 }
 

@@ -472,8 +472,30 @@ function Start-MxEntry {
                      -Target $script:MxTarget | Out-Null
 
     $script:MxStatus.Text = "running: $($resolved.Name)"
-    $script:MxBtnStop.Enabled = $true
+    # Hand the header's primary-action slot from Run to Stop for the duration.
+    $script:MxBtnStop.Visible = $true
+    if ($script:MxBtnRun) { $script:MxBtnRun.Visible = $false }
     $script:MxTimer.Start()
+}
+
+# Runnable = a single command, or a section with at least one read-only command
+# that can run unattended.
+function Test-MxNodeRunnable {
+    param($Node)
+    if (-not $Node -or -not $Node.Tag) { return $false }
+    if ($Node.Tag.Kind -eq 'entry') { return $true }
+    if ($Node.Tag.Kind -eq 'section') {
+        return (@($Node.Tag.Items | Where-Object { $_.Impact -eq 'read' -and -not $_.Prompt }).Count -gt 0)
+    }
+    $false
+}
+
+# The header top-right holds ONE primary action: green Run when something
+# runnable is selected and nothing is running, red Stop while a command runs.
+function Update-MxHeaderRun {
+    if (-not $script:MxBtnRun) { return }
+    if ($script:MxBtnStop -and $script:MxBtnStop.Visible) { $script:MxBtnRun.Visible = $false; return }
+    $script:MxBtnRun.Visible = (Test-MxNodeRunnable -Node $script:MxTree.SelectedNode)
 }
 
 function Start-MxBatch {
@@ -500,7 +522,10 @@ function Complete-MxRun {
     Update-MxBoardFlush
 
     Close-MatriseRun -Context $script:MxCtx
-    $script:MxBtnStop.Enabled = $false
+    # Keep Stop up if a batch (a whole section) still has commands to run;
+    # otherwise hide it - there is nothing left to stop - and bring Run back.
+    $script:MxBtnStop.Visible = ($script:MxBatch.Count -gt 0)
+    Update-MxHeaderRun
     $script:MxStatus.Text = "done: $($script:MxEntry.Name)  ($secs s, exit $code)"
 
     if ($script:MxAutoCopy.Checked) { Copy-MxBoard -Quiet }
@@ -1056,7 +1081,8 @@ function Invoke-MxTestTarget {
                 Add-MxBoardLine '  Start with:  Security > Hunt > FULL SWEEP'
                 Add-MxBoardLine '  or:          Computer > Diagnose > System summary'
                 Add-MxBoardLine ''
-                Add-MxBoardLine '  Press "This PC" in the bar above to point back at your own machine.'
+                Add-MxBoardLine '  To point back at your own machine: clear the Machine box and press'
+                Add-MxBoardLine '  Test connection (or press Stop connection on the Connected bar).'
                 Add-MxBoardLine ''
                 Update-MxBoardFlush
             }
@@ -1756,6 +1782,79 @@ function Show-MatriseWindow {
     $head.Controls.Add($hDesc)
     $head.Controls.Add($hName)
 
+    # --- board icon helper ------------------------------------------------
+    # Every board-action icon (analyze, copy, paste, load, save, delete) lives
+    # together on the find bar below. This builds one in the shared style: a
+    # borderless Segoe MDL2 Assets glyph - crisp, and no image files, in keeping
+    # with the no-binary rule.
+    $mkHeadIcon = {
+        param([string]$Glyph, [string]$Tip, [scriptblock]$OnClick)
+        $b = New-MxButton -Text $Glyph -Width 30 -Tip $Tip -OnClick $OnClick
+        $b.Height = 26
+        $b.Font = New-Object System.Drawing.Font('Segoe MDL2 Assets', 11)
+        $b.BackColor = $script:MxPanel
+        $b.FlatAppearance.BorderSize = 0
+        $b
+    }
+
+    # --- Stop, shown only while a command runs ----------------------------
+    # Most commands finish in a second, so a permanent greyed-out Stop was just
+    # clutter. Instead a bold red Stop appears at the top-right of the header -
+    # right by the name of whatever is running - the moment a command starts,
+    # and vanishes when it finishes. That is exactly when you want it: a long
+    # one (SFC, chkdsk, a full sweep) is obvious to cancel, and it kills the
+    # whole process tree and drops any queued batch.
+    $btnStop = New-MxButton -Text ([char]0x25A0 + '  Stop') -Width 88 -Tip (Get-MatriseTip 'ui.stop') -OnClick {
+        Stop-MatriseRun -Context $script:MxCtx
+        $script:MxBatch.Clear()
+        $script:MxStatus.Text = 'stopping...'
+        $script:MxBtnStop.Visible = $false
+    }
+    $btnStop.Height = 28
+    $btnStop.Font = New-Object System.Drawing.Font('Segoe UI', 9.5, [System.Drawing.FontStyle]::Bold)
+    $btnStop.BackColor = $script:MxHeavy
+    $btnStop.ForeColor = [System.Drawing.Color]::White
+    $btnStop.FlatAppearance.BorderSize = 0
+    $btnStop.Visible = $false
+    $script:MxBtnStop = $btnStop
+    $head.Controls.Add($btnStop); $btnStop.BringToFront()
+
+    # --- Run, the header's primary action -------------------------------------
+    # A green Run sits in the same top-right slot, right by the command it will
+    # run. It shows whenever a runnable command/section is selected and nothing
+    # is running; the moment you press it, it hands the slot to the red Stop.
+    $btnRun = New-MxButton -Text ([char]0x25B6 + '  Run') -Width 88 -Tip (Get-MatriseTip 'ui.run') -OnClick {
+        $node = $script:MxTree.SelectedNode
+        if (-not $node -or -not $node.Tag) { $script:MxStatus.Text = 'pick a command first'; return }
+        if ($node.Tag.Kind -eq 'entry') { Start-MxEntry -Entry $node.Tag.Entry; return }
+        if ($node.Tag.Kind -eq 'section') {
+            $safe = @($node.Tag.Items | Where-Object { $_.Impact -eq 'read' -and -not $_.Prompt })
+            if ($safe.Count -eq 0) { $script:MxStatus.Text = 'nothing runs unattended in this section'; return }
+            $script:MxStatus.Text = "queued $($safe.Count) read-only commands"
+            Start-MxBatch -Entries $safe
+            return
+        }
+        $script:MxStatus.Text = 'pick a command or a section'
+    }
+    $btnRun.Height = 28
+    $btnRun.Font = New-Object System.Drawing.Font('Segoe UI', 9.5, [System.Drawing.FontStyle]::Bold)
+    $btnRun.BackColor = [System.Drawing.Color]::FromArgb(64, 180, 99)
+    $btnRun.ForeColor = [System.Drawing.Color]::White
+    $btnRun.FlatAppearance.BorderSize = 0
+    $btnRun.Visible = $false
+    $script:MxBtnRun = $btnRun
+    $head.Controls.Add($btnRun); $btnRun.BringToFront()
+
+    # Pin Run and Stop to the same top-right slot as the header/window resizes -
+    # they are never shown at once. $sender + $script vars, never a captured
+    # local (a handler keeps session state, not this frame).
+    $head.Add_Resize({
+        param($s, $e)
+        foreach ($b in @($script:MxBtnStop, $script:MxBtnRun)) {
+            if ($b) { $b.Location = New-Object System.Drawing.Point(($s.ClientSize.Width - 12 - $b.Width), 7) }
+        }
+    })
+
     # --- find bar ---------------------------------------------------------
     $findBar = New-Object System.Windows.Forms.Panel
     $findBar.Dock = 'Top'
@@ -1800,6 +1899,50 @@ function Show-MatriseWindow {
     $script:MxWrap = $wrap
     Register-MxHover -Control $wrap -Text (Get-MatriseTip 'ui.wrap')
     $findBar.Controls.Add($wrap)
+
+    # --- board-action icons, right of the find bar ------------------------
+    # Every action that acts on the board sits here on the board's own row:
+    # analyze, copy, paste, load, save, and (set apart) delete. Same borderless
+    # glyph style throughout; find-bar background so they blend.
+    $mkFindIcon = {
+        param([string]$Glyph, [string]$Tip, [scriptblock]$OnClick)
+        $b = & $mkHeadIcon $Glyph $Tip $OnClick
+        $b.BackColor = $script:MxBg
+        $findBar.Controls.Add($b)
+        $b
+    }
+    $script:MxFIcoAnalyze = & $mkFindIcon ([char]0xE9D9) (Get-MatriseTip 'ui.analyze') { Invoke-MxAnalyze }
+    $script:MxFIcoCopy    = & $mkFindIcon ([char]0xE8C8) (Get-MatriseTip 'ui.copy')    { Copy-MxBoard }
+    $script:MxFIcoPaste   = & $mkFindIcon ([char]0xE77F) (Get-MatriseTip 'ui.paste')   { Add-MxFromClipboard }
+    $script:MxFIcoLoad    = & $mkFindIcon ([char]0xE8B7) (Get-MatriseTip 'ui.load')    { Open-MxFile }
+    $script:MxFIcoSave    = & $mkFindIcon ([char]0xE74E) (Get-MatriseTip 'ui.save')    { Save-MxReport }
+    $script:MxFIcoDelete  = & $mkFindIcon ([char]0xE74D) (Get-MatriseTip 'ui.clear') {
+        if ($script:MxRaw.Length -gt 0) {
+            $r = [System.Windows.Forms.MessageBox]::Show('Clear the board? Anything not saved is lost.', 'Matrise',
+                    [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question)
+            if ($r -ne [System.Windows.Forms.DialogResult]::Yes) { return }
+        }
+        Clear-MxBoard
+        $script:MxStatus.Text = 'board cleared'
+    }
+    # Delete tints red so the destructive one is unmistakable.
+    $script:MxFIcoDelete.ForeColor = $script:MxHeavy
+
+    # Pin them to the right as the bar resizes, in reading order
+    # analyze copy paste load save | delete. An extra gap sets delete apart so
+    # the destructive action is not flush against Save. $sender + $script vars,
+    # never a captured local - a handler keeps session state, not this frame.
+    $findBar.Add_Resize({
+        param($s, $e)
+        $order = @($script:MxFIcoDelete, $script:MxFIcoSave, $script:MxFIcoLoad,
+                   $script:MxFIcoPaste, $script:MxFIcoCopy, $script:MxFIcoAnalyze)
+        foreach ($b in $order) { if (-not $b) { return } }
+        $x = $s.ClientSize.Width - 8
+        foreach ($b in $order) {
+            $x -= $b.Width; $b.Left = $x; $b.Top = 4
+            $x -= $(if ($b -eq $script:MxFIcoDelete) { 12 } else { 4 })
+        }
+    })
 
     $boardHost.Controls.Add($board)
     $boardHost.Controls.Add($findBar)
@@ -1886,20 +2029,9 @@ function Show-MatriseWindow {
     $bar.WrapContents  = $false
     $bar.AutoScroll    = $true
 
-    $btnRun = New-MxButton -Text 'Run' -Width 66 -Tip (Get-MatriseTip 'ui.run') -OnClick {
-        $node = $script:MxTree.SelectedNode
-        if (-not $node -or -not $node.Tag) { $script:MxStatus.Text = 'pick a command first'; return }
-        if ($node.Tag.Kind -eq 'entry') { Start-MxEntry -Entry $node.Tag.Entry; return }
-        if ($node.Tag.Kind -eq 'section') {
-            $safe = @($node.Tag.Items | Where-Object { $_.Impact -eq 'read' -and -not $_.Prompt })
-            if ($safe.Count -eq 0) { $script:MxStatus.Text = 'nothing runs unattended in this section'; return }
-            $script:MxStatus.Text = "queued $($safe.Count) read-only commands"
-            Start-MxBatch -Entries $safe
-            return
-        }
-        $script:MxStatus.Text = 'pick a command or a section'
-    }
-    $script:MxBtnRun = $btnRun
+    # Run is not on the toolbar any more: it is the green primary-action button
+    # at the top-right of the board header, right by the command it will run
+    # (and it flips to the red Stop while a command is running). See the header.
 
     $btnCmd = New-MxButton -Text 'Open in CMD' -Width 106 -Tip (Get-MatriseTip 'ui.opencmd') -OnClick {
         $node = $script:MxTree.SelectedNode
@@ -1911,37 +2043,17 @@ function Show-MatriseWindow {
         $script:MxStatus.Text = 'opened a console window'
     }
 
-    $btnStop = New-MxButton -Text 'Stop' -Width 60 -Tip (Get-MatriseTip 'ui.stop') -OnClick {
-        Stop-MatriseRun -Context $script:MxCtx
-        $script:MxBatch.Clear()
-        $script:MxStatus.Text = 'stopping...'
-    }
-    $btnStop.Enabled = $false
-    $script:MxBtnStop = $btnStop
+    # Stop is not here any more: it lived greyed-out on the toolbar ~99% of the
+    # time. It now appears - prominently, in red - at the top-right of the board
+    # header only while a command is actually running (see the header section).
 
     $sep1 = New-Object System.Windows.Forms.Label
     $sep1.Text = '|'; $sep1.Width = 14; $sep1.Height = 26; $sep1.ForeColor = $script:MxDim
     $sep1.TextAlign = 'MiddleCenter'
 
-    $btnCopy  = New-MxButton -Text 'Copy board' -Width 96 -Tip (Get-MatriseTip 'ui.copy') -OnClick { Copy-MxBoard }
-    $btnPaste = New-MxButton -Text 'Paste in'   -Width 80 -Tip (Get-MatriseTip 'ui.paste') -OnClick { Add-MxFromClipboard }
-    $btnLoad  = New-MxButton -Text 'Load file'  -Width 82 -Tip (Get-MatriseTip 'ui.load') -OnClick { Open-MxFile }
-    $btnSave  = New-MxButton -Text 'Save report'-Width 96 -Tip (Get-MatriseTip 'ui.save') -OnClick { Save-MxReport }
-    $btnClear = New-MxButton -Text 'Clear'      -Width 62 -Tip (Get-MatriseTip 'ui.clear') -OnClick {
-        if ($script:MxRaw.Length -gt 0) {
-            $r = [System.Windows.Forms.MessageBox]::Show('Clear the board? Anything not saved is lost.', 'Matrise',
-                    [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question)
-            if ($r -ne [System.Windows.Forms.DialogResult]::Yes) { return }
-        }
-        Clear-MxBoard
-        $script:MxStatus.Text = 'board cleared'
-    }
-
-    $sep2 = New-Object System.Windows.Forms.Label
-    $sep2.Text = '|'; $sep2.Width = 14; $sep2.Height = 26; $sep2.ForeColor = $script:MxDim
-    $sep2.TextAlign = 'MiddleCenter'
-
-    $btnScan  = New-MxButton -Text 'Analyze' -Width 78 -Tip (Get-MatriseTip 'ui.analyze') -OnClick { Invoke-MxAnalyze }
+    # Paste, Load, Save and Analyze now live as icons on the board's find bar,
+    # and Copy/Clear as icons on the board header - they all act on the board,
+    # so they belong on it rather than crowding this toolbar.
     $btnCustom = New-MxButton -Text 'Run command...' -Width 118 -Tip (Get-MatriseTip 'ui.custom') -OnClick {
         Show-MxCustomCommand
     }
@@ -1970,29 +2082,36 @@ function Show-MatriseWindow {
     Register-MxHover -Control $autoScan -Text (Get-MatriseTip 'ui.autoscan')
     $script:MxAutoScan = $autoScan
 
-    $bar.Controls.AddRange(@($btnRun, $btnCmd, $btnCustom, $btnNetScan, $btnStop, $sep1,
-                             $btnCopy, $btnPaste, $btnLoad, $btnSave, $btnClear, $sep2,
-                             $btnScan, $btnAgent, $btnChunk, $autoCopy, $autoScan))
+    $bar.Controls.AddRange(@($btnCmd, $btnCustom, $btnNetScan, $sep1,
+                             $btnAgent, $btnChunk, $autoCopy, $autoScan))
 
     # ------------------------------------------------------------ target bar -
     # Auto-flowing so buttons can never overlap, whatever gets added later.
     # Three groups separated by dividers: choose a machine, connect to a peer,
-    # then peer actions. Requests is pinned to the right.
+    # then peer actions. Requests is an icon pinned right, shown only when a
+    # Security policy is loaded.
     $tbar = New-Object System.Windows.Forms.Panel
     $tbar.Dock = 'Top'
     $tbar.Height = 40
     $tbar.BackColor = [System.Drawing.Color]::FromArgb(28, 31, 38)
 
+    # Requests (the approvals queue) only does anything when a Security policy is
+    # loaded. So it is a small icon pinned right, shown ONLY in a managed estate;
+    # at home, with no policy, it is hidden rather than opening a window that just
+    # says "this is a workplace feature".
     $tright = New-Object System.Windows.Forms.Panel
     $tright.Dock = 'Right'
-    $tright.Width = 108
+    $tright.Width = 46
     $tright.BackColor = $tbar.BackColor
+    $tright.Visible = [bool]$script:MxPolicy.IsManaged
 
-    $btnReq = New-MxButton -Text 'Requests' -Width 92 -Tip (Get-MatriseTip 'ui.requests') -OnClick {
+    $btnReq = & $mkHeadIcon ([char]0xE762) (Get-MatriseTip 'ui.requests') {
         Show-MxRequestsWindow -Policy $script:MxPolicy
     }
-    $btnReq.Location = New-Object System.Drawing.Point(6, 6)
+    $btnReq.BackColor = $tbar.BackColor
+    $btnReq.Location = New-Object System.Drawing.Point(8, 7)
     $tright.Controls.Add($btnReq)
+    $script:MxBtnReq = $btnReq
 
     $tflow = New-Object System.Windows.Forms.FlowLayoutPanel
     $tflow.Dock = 'Fill'
@@ -2040,13 +2159,9 @@ function Show-MatriseWindow {
     Register-MxHover -Control $tbox -Text (Get-MatriseTip 'ui.target')
     $tflow.Controls.Add($tbox)
 
-    Add-MxTButton 'This PC' 74 (Get-MatriseTip 'ui.thispc') {
-        $script:MxTargetBox.Text = ''
-        $script:MxTarget = New-MatriseTarget
-        Update-MxTargetLabel
-        $script:MxStatus.Text = 'target: this PC'
-    } | Out-Null
-
+    # (No "This PC" button: leaving the Machine box empty and pressing Test
+    # connection already means "this PC", and Stop connection returns you here
+    # after a peer session - so a dedicated reset button was just noise.)
     Add-MxTButton 'Test connection' 116 (Get-MatriseTip 'ui.testconn') {
         Invoke-MxTestTarget
     } | Out-Null
@@ -2109,15 +2224,11 @@ function Show-MatriseWindow {
     # One door for both roles. The chooser inside picks help-a-PC (Guest) or
     # be-helped (Host); merging them keeps the bar short and stops people
     # guessing which of two similarly-named buttons they want.
+    # One door for everything about connecting two PCs: the two roles for the
+    # same-network path, and the off-network / repair setup folded in behind it.
     Add-MxTButton 'Hosting' 84 (Get-MatriseTip 'ui.hosting') {
         Write-MxTiming 'Hosting chooser opened'
         Show-MxHostingChooser
-    } | Out-Null
-    Add-MxTButton 'Home setup' 100 (Get-MatriseTip 'ui.homesetup') {
-        Write-MxTiming 'Home setup button pressed'
-        $script:MxStatus.Text = 'opening Home setup...'
-        Show-MxHomeSetup -Target $script:MxTarget
-        $script:MxStatus.Text = 'ready'
     } | Out-Null
 
     Add-MxTSep
@@ -2221,7 +2332,11 @@ function Show-MatriseWindow {
             $safe = @($node.Tag.Items | Where-Object { $_.Impact -eq 'read' -and -not $_.Prompt }).Count
             $script:MxHeadName.Text = "$($node.Tag.Group) / $($node.Tag.Section)"
             $script:MxHeadName.ForeColor = $script:MxFg
-            $script:MxHeadDesc.Text = "$n commands here. Press Run to execute the $safe read-only ones back to back and collect everything on one board."
+            $script:MxHeadDesc.Text = $(if ($safe -gt 0) {
+                "$n commands here. Press Run to execute the $safe read-only ones back to back and collect everything on one board."
+            } else {
+                "$n commands here - they all change your system, so none run unattended. Open the section and pick one to run it on its own."
+            })
             $script:MxHeadCmd.Text  = (@($node.Tag.Items) | ForEach-Object { "- $($_.Name)" }) -join "`r`n"
             Update-MxHeadHeight
         }
@@ -2231,6 +2346,8 @@ function Show-MatriseWindow {
             $script:MxHeadDesc.Text = 'Open a section and pick a command.'
             $script:MxHeadCmd.Text  = ''
         }
+        # Show/hide the green Run to match what is now selected.
+        Update-MxHeaderRun
     })
 
     $tree.Add_MouseMove({

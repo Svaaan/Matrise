@@ -230,7 +230,8 @@ This is the part worth knowing before you go and set up two machines.
 
 Remote commands travel over **WinRM, which is already part of Windows**. To run
 diagnostics on her PC, and to put a message on her screen, she needs *nothing
-installed* — only the one pairing script from **Home setup**, run once.
+installed* — only the one pairing script from **Hosting** (the off-network
+option), run once.
 
 Install Matrise on her PC only if you want the extras:
 
@@ -272,9 +273,11 @@ and that button now says so instead of sending you looking for a corporate
 share.
 
 What you do need is for the two machines to be introduced to each other once.
-**Home setup** walks both halves:
+The **Hosting** button handles this: for two PCs on the same network it is the
+zero-script rendezvous (pick a side and approve), and when you cannot both be
+online at once it also holds the off-network setup that walks both halves:
 
-**On their PC** — they run one script, as Administrator. Home setup writes it as `Enable-MatriseHelp.ps1` next to the app and there is a button to copy its text. It sets the network
+**On their PC** — they run one script, as Administrator. Matrise writes it as `Enable-MatriseHelp.ps1` next to the app and there is a button to copy its text. It sets the network
 profile to Private (remote help is blocked on Public, which is correct
 behaviour in a café), turns on Windows remote management, and prints the
 computer name and username you'll need. The undo command is at the bottom of
@@ -479,7 +482,8 @@ the connection windows, and (on the helped PC) the hosting session - so there is
 always one obvious way to pull the plug.
 
 Everything *after* first contact is pushed from your side over the connection
-you already have. **Home setup > Refresh this PC now** re-runs the whole
+you already have. **Hosting > "Set up off-network, or repair a connection" >
+Refresh this PC now** re-runs the whole
 host-side setup on a connected machine - rotates the helper account's password,
 re-grants its rights by well-known SID, re-enables remoting, resets the token
 policy - with no script sent and nothing pasted, then saves the new sign-in

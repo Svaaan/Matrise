@@ -425,10 +425,6 @@ function Get-MatriseExplainTable {
         'Which machine the commands run on. Leave it empty for this PC, or type the hostname of the machine you are supporting.' `
         'Use the hostname, not the IP, wherever you can. A hostname can authenticate properly through the domain; a bare IP cannot, and needs extra setup.'
 
-    & $e 'ui.thispc' `
-        'Points everything back at the computer you are sitting in front of.' `
-        'Use it when you have finished with someone else machine, so you do not accidentally run a repair on the wrong one.'
-
     & $e 'ui.testconn' `
         'Walks the chain a remote connection depends on, one link at a time: does the name resolve, is the remote-management port open, and do your credentials get accepted.' `
         'Run it before anything else when connecting to a machine. It tells you which link is broken instead of just saying "failed".'
@@ -444,10 +440,6 @@ function Get-MatriseExplainTable {
     & $e 'ui.policy' `
         'The rule set your Security team publishes, saying which commands IT Support may run freely, which need approval first, and which are off limits.' `
         'Commands are marked in the list on the left. If nothing is marked, no policy file was found and everything is available.'
-
-    & $e 'ui.homesetup' `
-        'Everything needed to let this PC help another one in the same house. Home PCs are not in a work network, so the two have to be introduced to each other once.' `
-        'Start here before trying to connect to a family member computer. It gives them a script to run and you a button to trust their machine.'
 
     & $e 'ui.sendmsg' `
         'Puts a message box on the other person screen, so you can tell them what you are doing or ask them to try something.' `
@@ -470,7 +462,7 @@ function Get-MatriseExplainTable {
         'Nothing is shared until you press Approve. Closing the window stops it immediately.'
 
     & $e 'ui.hosting' `
-        'One button for connecting two PCs on the same home network. It asks which side you are: helping another PC, or letting someone help this one. Nothing is typed on either side - the person being helped just approves.' `
+        'One button for everything about connecting two PCs. Pick a side - helping another PC, or letting someone help this one - and on the same home network nothing is typed; the person being helped just approves. It also holds the off-network fallback: send a one-time script, or repair a connection that stopped working.' `
         'Both screens show the same six-digit number to check before approving. Once connected, a small "Connected to..." bar appears with a Stop connection button that ends everything at once.'
 
     & $e 'ui.seescreen' `
