@@ -1945,15 +1945,11 @@ function Show-MatriseWindow {
     $btnCustom = New-MxButton -Text 'Run command...' -Width 118 -Tip (Get-MatriseTip 'ui.custom') -OnClick {
         Show-MxCustomCommand
     }
-    $btnNetScan = New-MxButton -Text 'Scan network' -Width 108 -Tip (Get-MatriseTip 'net.scan') -OnClick {
-        $e = (Get-MatriseCatalog) | Where-Object { $_.Id -eq 'net.scan' } | Select-Object -First 1
-        if ($e) {
-            # Also select it in the tree, so the header shows what is running.
-            foreach ($g in $script:MxTree.Nodes) { foreach ($sec in $g.Nodes) { foreach ($n in $sec.Nodes) {
-                if ($n.Tag.Entry.Id -eq 'net.scan') { $script:MxTree.SelectedNode = $n }
-            } } }
-            Start-MxEntry -Entry $e
-        }
+    # Opens the Devices page - the rich list (names, NEW flags, live dots, port
+    # checks). The plain text-dump scan is still one entry in Network > Diagnose,
+    # so a scan against a REMOTE machine is still available from the tree.
+    $btnNetScan = New-MxButton -Text 'Scan network' -Width 108 -Tip (Get-MatriseTip 'ui.devices') -OnClick {
+        Show-MxDevicesWindow
     }
     $btnAgent = New-MxButton -Text 'Ask Claude' -Width 98 -Tip (Get-MatriseTip 'ui.agent') -OnClick { Invoke-MxAgent }
 
@@ -2110,16 +2106,12 @@ function Show-MatriseWindow {
     Add-MxTSep
 
     # --- group 2: connect to another PC ---
-    Add-MxTButton 'Find a PC' 90 (Get-MatriseTip 'ui.guest') {
-        Write-MxTiming 'Guest window opened'
-        Show-MxGuestWindow
-    } | Out-Null
-    Add-MxTButton 'Host me' 82 (Get-MatriseTip 'ui.host') {
-        Write-MxTiming 'Host window opened'
-        Show-MxHostWindow
-    } | Out-Null
-    Add-MxTButton 'Devices' 84 (Get-MatriseTip 'ui.devices') {
-        Show-MxDevicesWindow
+    # One door for both roles. The chooser inside picks help-a-PC (Guest) or
+    # be-helped (Host); merging them keeps the bar short and stops people
+    # guessing which of two similarly-named buttons they want.
+    Add-MxTButton 'Hosting' 84 (Get-MatriseTip 'ui.hosting') {
+        Write-MxTiming 'Hosting chooser opened'
+        Show-MxHostingChooser
     } | Out-Null
     Add-MxTButton 'Home setup' 100 (Get-MatriseTip 'ui.homesetup') {
         Write-MxTiming 'Home setup button pressed'

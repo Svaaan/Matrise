@@ -458,7 +458,7 @@ function Get-MatriseExplainTable {
         'The code is a password in disguise - anyone who has it can sign in to their PC. Send it privately and delete the message afterwards.'
 
     & $e 'ui.homesetup' `
-        'Sets up help between two PCs in a house. If you are both on the same network, Find a PC and Host me do it with no script at all; the script here is the fallback for off-network. Already connected? It can refresh a machine over the live link.' `
+        'Sets up help between two PCs in a house. If you are both on the same network, the Hosting button does it with no script at all - each side just picks its role; the script here is the fallback for off-network. Already connected? It can refresh a machine over the live link.' `
         'They run one script, they send you one code, you paste it. Nothing else needs typing.'
 
     & $e 'ui.guest' `
@@ -468,6 +468,10 @@ function Get-MatriseExplainTable {
     & $e 'ui.host' `
         'Offers this PC up to be helped. It becomes visible to the other machine, and when they ask, you get a box showing who it is and a number to check.' `
         'Nothing is shared until you press Approve. Closing the window stops it immediately.'
+
+    & $e 'ui.hosting' `
+        'One button for connecting two PCs on the same home network. It asks which side you are: helping another PC, or letting someone help this one. Nothing is typed on either side - the person being helped just approves.' `
+        'Both screens show the same six-digit number to check before approving. Once connected, a small "Connected to..." bar appears with a Stop connection button that ends everything at once.'
 
     & $e 'ui.seescreen' `
         'Opens Windows Quick Assist so you can watch their screen live and, if they let you, control it. Matrise does not do the screen sharing itself - Quick Assist is Microsoft''s own tool and does it properly.' `

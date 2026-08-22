@@ -14,11 +14,144 @@ function New-MxRvLabel {
 }
 
 # =========================================================================
+#  ONE DOOR - pick your side, then open the matching window
+# =========================================================================
+# The bar used to carry two similarly-named buttons (Find a PC / Host me) and
+# people had to know which was which. One "Hosting" button opens this, which
+# names the two roles in plain words and hands off to the existing window.
+function Show-MxHostingChooser {
+    $script:MxHostingChoice = ''
+
+    $c = New-Object System.Windows.Forms.Form
+    $c.Text = 'Matrise - connect two PCs'
+    $c.StartPosition = 'CenterParent'
+    $c.FormBorderStyle = 'FixedDialog'
+    $c.MinimizeBox = $false; $c.MaximizeBox = $false
+    $c.ClientSize = New-Object System.Drawing.Size(520, 300)
+    $c.BackColor = $script:MxBg; $c.ForeColor = $script:MxFg
+
+    $c.Controls.Add((New-MxRvLabel 'Connect this PC to another' 20 18 480 26 13 $true))
+    $c.Controls.Add((New-MxRvLabel (@(
+        'Both PCs need to be on the same home network. Nothing is typed on either',
+        'side - the person being helped just approves, after checking a number.'
+    ) -join "`r`n") 20 48 480 40 9 $false $script:MxDim))
+
+    # Help another PC = Guest.
+    $bGuest = New-MxDlgButton -Text 'Help another PC' -W 480
+    $bGuest.SetBounds(20, 104, 480, 40)
+    $bGuest.Add_Click({ $script:MxHostingChoice = 'guest'; $c.Close() })
+    $c.Controls.Add($bGuest)
+    $c.Controls.Add((New-MxRvLabel 'Find a PC that is asking for help and connect to it.' 24 146 470 18 9 $false $script:MxDim))
+
+    # Let someone help this PC = Host.
+    $bHost = New-MxDlgButton -Text 'Let someone help this PC' -W 480
+    $bHost.SetBounds(20, 178, 480, 40)
+    $bHost.Add_Click({ $script:MxHostingChoice = 'host'; $c.Close() })
+    $c.Controls.Add($bHost)
+    $c.Controls.Add((New-MxRvLabel 'Make this PC visible so someone you trust can connect and help.' 24 220 470 18 9 $false $script:MxDim))
+
+    $bClose = New-MxDlgButton -Text 'Close' -W 100 -Result 'Cancel'
+    $bClose.SetBounds(400, 254, 100, 30); $bClose.Anchor = 'Bottom, Right'
+    $c.Controls.Add($bClose)
+    $c.CancelButton = $bClose
+
+    $c.Add_Shown({ Hide-MxPop; Show-MxDialogFront -Dialog $c })
+    [void]$c.ShowDialog($script:MxForm)
+    $c.Dispose()
+
+    switch ($script:MxHostingChoice) {
+        'guest' { Write-MxTiming 'Guest window opened'; Show-MxGuestWindow }
+        'host'  { Write-MxTiming 'Host window opened';  Show-MxHostWindow }
+    }
+}
+
+# =========================================================================
+#  CONNECTED - the little bar that says a link is live, with one stop
+# =========================================================================
+# Appears the moment a connection is established, on either side. Its Stop
+# connection button ends everything at once: the screen share, the Guest/Host
+# windows, and (for a guest) the remote target - so there is always one obvious
+# way to pull the plug.
+function Show-MxConnectedWindow {
+    param([string]$Name, [string]$Address, [string]$Role)
+
+    # Only ever one of these.
+    if ($script:MxRvConnForm) { try { $script:MxRvConnForm.Close() } catch { }; $script:MxRvConnForm = $null }
+    $script:MxRvConnRole = $Role
+
+    $w = New-Object System.Windows.Forms.Form
+    $w.Text = 'Matrise - connected'
+    $w.FormBorderStyle = 'FixedToolWindow'
+    $w.StartPosition = 'Manual'
+    $w.TopMost = $true
+    $w.ShowInTaskbar = $false
+    $w.ClientSize = New-Object System.Drawing.Size(430, 96)
+    $w.BackColor = $script:MxPanel; $w.ForeColor = $script:MxFg
+
+    # Sit it at the bottom-right of the work area, out of the way.
+    try {
+        $wa = [System.Windows.Forms.Screen]::FromControl($script:MxForm).WorkingArea
+        $w.Location = New-Object System.Drawing.Point(($wa.Right - $w.Width - 16), ($wa.Bottom - $w.Height - 16))
+    } catch { }
+
+    $who = $(if ($Name) { $Name } else { $Address })
+    $w.Controls.Add((New-MxRvLabel ("Connected to " + $who) 14 12 404 24 12 $true ([System.Drawing.Color]::FromArgb(124, 222, 146))))
+    $sub = $(if ($Name -and $Address) { "$Address  -  $(if ($Role -eq 'host') { 'they are helping this PC' } else { 'you are controlling this PC' })" }
+             else { $(if ($Role -eq 'host') { 'they are helping this PC' } else { 'you are controlling this PC' }) })
+    $w.Controls.Add((New-MxRvLabel $sub 14 38 404 18 9 $false $script:MxDim))
+
+    $stop = New-MxDlgButton -Text 'Stop connection' -W 150
+    $stop.SetBounds(266, 58, 150, 28)
+    $stop.ForeColor = $script:MxHeavy
+    $stop.Add_Click({
+        Stop-MxConnection
+        try { if ($script:MxRvConnForm) { $script:MxRvConnForm.Close() } } catch { }
+    })
+    $w.Controls.Add($stop)
+
+    $w.Add_FormClosed({ $script:MxRvConnForm = $null })
+    $script:MxRvConnForm = $w
+    # Ownerless on purpose: the Host window is modal (it disables its owner while
+    # open), so a connected bar owned by that same owner could come up disabled.
+    # TopMost keeps this ownerless window above everything and always clickable.
+    $w.Show()
+    $w.BringToFront()
+}
+
+# Tears down a live connection from either side. Safe to call more than once.
+function Stop-MxConnection {
+    # The screen share is Windows Quick Assist, a separate app we only launched;
+    # closing its process is the honest way to end the shared view.
+    try { Get-Process -Name 'quickassist' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue } catch { }
+
+    # Close the Guest/Host windows - their own FormClosing stops the listeners,
+    # the beacon and (host) the hosting session and remote management job.
+    try { if ($script:MxRvGuestForm) { $script:MxRvGuestForm.Close() } } catch { }
+    try { if ($script:MxRvHostForm)  { $script:MxRvHostForm.Close() } }  catch { }
+
+    # If this PC was the guest driving a remote machine, hand control back to
+    # this PC so nothing keeps running against the far end by accident.
+    if ($script:MxRvConnRole -eq 'guest') {
+        try {
+            if ($script:MxTargetBox) { $script:MxTargetBox.Text = '' }
+            $script:MxTarget = New-MatriseTarget
+            Update-MxTargetLabel
+        } catch { }
+    }
+
+    Add-MxBoardLine ''
+    Add-MxBoardLine '*** Connection stopped. ***'
+    Update-MxBoardFlush
+    if ($script:MxStatus) { $script:MxStatus.Text = 'connection stopped' }
+}
+
+# =========================================================================
 #  HOST - the PC that wants help
 # =========================================================================
 function Show-MxHostWindow {
 
     $d = New-Object System.Windows.Forms.Form
+    $script:MxRvHostForm = $d
     $d.Text = 'Matrise - let someone help this PC'
     $d.StartPosition = 'CenterParent'
     $d.ClientSize = New-Object System.Drawing.Size(720, 520)
@@ -134,6 +267,7 @@ function Show-MxHostWindow {
                     try {
                         Send-MatriseRvDatagram -Address $item.From -Port ([int]$m.p) -Payload $grant
                         & $say 'APPROVED - sign-in sent. They can connect now.'
+                        Show-MxConnectedWindow -Name ([string]$m.h) -Address ([string]$item.From) -Role 'host'
                     }
                     catch { & $say ("Could not reply: " + $_.Exception.Message) }
                 }
@@ -157,6 +291,7 @@ function Show-MxHostWindow {
         Add-MxBoardLine '*** Stopped hosting. ***'
         Add-MxBoardLine "    The $($S.Account) account is still there. Remove it with: Remove-LocalUser $($S.Account)"
         Update-MxBoardFlush
+        $script:MxRvHostForm = $null
     })
 
     [void]$d.ShowDialog($script:MxForm)
@@ -427,10 +562,16 @@ function Show-MxGuestWindow {
                     & $say 'Approved. Checking the connection and closing this window...'
                     $codeLbl.Text = 'Approved'
 
+                    # Remember who we reached for the timer tick and the connected
+                    # bar it opens - the tick keeps session state, not these
+                    # locals, so stash them in script scope.
+                    $script:MxRvConnName = [string]$m.h
+                    $script:MxRvConnAddr = [string]$item.From
+
                     # No "now press Test connection" step - just do it. The
-                    # window closes itself and the connection banner appears on
-                    # the board, so the next thing the user sees is "pick a
-                    # command and Run".
+                    # window closes itself, the connection banner appears on the
+                    # board, and a small "Connected to..." bar opens with the one
+                    # Stop connection button.
                     #
                     # The handler uses its $sender (the timer), NEVER a captured
                     # local - a scriptblock keeps session state, not this frame's
@@ -443,6 +584,7 @@ function Show-MxGuestWindow {
                         try { $sender.Stop(); $sender.Dispose() } catch { }
                         try { if ($script:MxRvGuestForm) { $script:MxRvGuestForm.Close() } } catch { }
                         try { Invoke-MxTestTarget } catch { }
+                        try { Show-MxConnectedWindow -Name $script:MxRvConnName -Address $script:MxRvConnAddr -Role 'guest' } catch { }
                     })
                     $script:MxRvDone.Start()
                 }

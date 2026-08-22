@@ -54,7 +54,7 @@ which inlines all 18 modules into `Matrise.bundle.ps1` - one file you can hand
 over, e-mail, or drop on a USB stick, with no `lib\` folder to keep alongside
 it. It prints the file's SHA-256 so whoever receives it can confirm it arrived
 unaltered, and verifies it parses before finishing. Rename it to `Matrise.ps1`
-and it behaves exactly like the folder version (the full 45-check self-test
+and it behaves exactly like the folder version (the full 47-check self-test
 passes from the single file). The bundle is a build artifact and is gitignored.
 
 Either way there is nothing to install: no compiled binary, no service, no
@@ -66,7 +66,7 @@ next to itself.
 
 ### 1. Pick a command
 
-The tree on the left holds **62 commands** in three groups:
+The tree on the left holds **63 commands** in three groups:
 
 | Group | Diagnose / Hunt | Fix |
 |---|---|---|
@@ -236,7 +236,7 @@ Install Matrise on her PC only if you want the extras:
 
 | | Needs Matrise on her PC? |
 |---|---|
-| Run any of the 62 commands against her machine | no |
+| Run any of the 63 commands against her machine | no |
 | Put a message on her screen | no |
 | Her seeing messages in an app, and replying | yes |
 | Her running checks on her own machine herself | yes |
@@ -466,9 +466,17 @@ once, as administrator, to switch on remote management. Windows forbids doing
 that remotely on purpose - if a PC could enable remote access to itself at a
 stranger's request, that would be the hole. That step is the consent.
 
-On the same network it is still nearly one-touch: **Host me** on their side,
-**Find a PC** on yours - no script, no code to paste. The Home setup script is
-only the fallback for when you cannot both be on the network at the same time.
+On the same network it is still nearly one-touch. Both sides press the one
+**Hosting** button and pick their role: they choose *Let someone help this PC*,
+you choose *Help another PC* - no script, no code to paste. The Home setup
+script is only the fallback for when you cannot both be on the network at the
+same time.
+
+The moment the two connect, a small **Connected to...** bar appears on each
+screen showing the other PC's name and address, with a single **Stop
+connection** button. Pressing it ends everything at once - the shared screen,
+the connection windows, and (on the helped PC) the hosting session - so there is
+always one obvious way to pull the plug.
 
 Everything *after* first contact is pushed from your side over the connection
 you already have. **Home setup > Refresh this PC now** re-runs the whole
@@ -506,22 +514,22 @@ This is governance you can prove to a security team, not just claim.
 ---
 ## Scan the network for devices
 
-**Scan network** on the toolbar (also in Network > Diagnose) sweeps the whole
-local network and lists every device that answers: its IP, its MAC (hardware)
-address, the name it goes by, and a best-guess maker read from the MAC. It pings
-every address so each device replies at the network level, then reads the ARP
-table - so it catches even devices that ignore ping. About five seconds.
+**Scan network** on the toolbar sweeps the whole local network and opens the
+Devices page. It pings every address so each device replies at the network
+level, then reads the ARP table - so it catches even devices that ignore ping.
+About five seconds.
 
-Because it is an ordinary catalogue command, it also runs against a machine you
-are connected to, so you can scan a remote PC's network too. An unfamiliar
-device is worth identifying.
+The same scan is also one plain command in **Network > Diagnose**, which dumps
+the raw list (IP, MAC, name, maker) onto the board as text. Because that one is
+an ordinary catalogue command, it runs against a machine you are connected to,
+so you can scan a *remote* PC's network from the tree too.
 
 ### The Devices page
 
-**Devices** (the button on the target bar) turns that raw scan into a living
-list you can work with. It is built around one idea: **you name the devices you
-recognise, and anything you have never named is flagged NEW** — a quiet way to
-notice a device you did not put on your own network.
+The **Scan network** button opens this - a living list you can work with, built
+around one idea: **you name the devices you recognise, and anything you have
+never named is flagged NEW** — a quiet way to notice a device you did not put on
+your own network.
 
 - **Name this... / Forget** — give a device a friendly name and an owner (a
   person or a room). Names are remembered per MAC in `devices.json`, so future
@@ -566,8 +574,9 @@ powershell -ExecutionPolicy Bypass -File Matrise.ps1 -SelfTest
 
 Builds the real window, loads a synthetic "infected machine" fixture, runs the
 analyzer, exercises find/filter/jump, then runs a real command end to end and
-checks the output landed. Thirty-four checks, PASS/FAIL each — including one that
-fails if any command is missing its hover explanation.
+checks the output landed. Forty-seven checks, PASS/FAIL each — including one that
+fails if any command is missing its hover explanation, and one that verifies the
+Devices name/flag logic offline.
 
 `tests\sample-compromised.txt` is that fixture — fake output from a deliberately
 compromised machine. Load it with **Load file** and press **Analyze** to see what
@@ -627,13 +636,16 @@ lib\Peer.ps1             home pairing, peer messages, on-screen alerts
 policy.example.json      an example Security policy
 audit\                   local audit log (jsonl, one line per attempt)
 audit\ui-errors.log      full stack traces for anything that goes wrong in the window
-lib\Catalog.ps1          the 62 commands
+lib\Catalog.ps1          the 63 commands
 lib\Runner.ps1           background execution, live output, real-console mode
 lib\Analyzer.ps1         offline detection rules
+lib\Devices.ps1          network scan, known-device registry, live + port checks
+lib\GuiDevices.ps1       the Devices window
 lib\Agent.ps1            Claude CLI + clipboard hand-off
 lib\Gui.ps1              the window
 tests\                   synthetic fixture for the analyzer
 reports\                 saved reports, agent prompts, generated console scripts
+devices.json             remembered device names and owners, keyed by MAC
 matrise-layout.json      remembered window size and divider positions
 Quarantine\              created on first use
 ```

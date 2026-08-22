@@ -169,7 +169,7 @@ function Show-MxHomeSetup {
     # Lead with the automated paths - most people never need the script below.
     $intro = New-MxLabel -Text (@(
         'Easiest, if you are both on the same network right now:',
-        '   - they press  Host me  ,  you press  Find a PC  - nothing is typed or sent.',
+        '   - you both press  Hosting  and pick your side - nothing is typed or sent.',
         '',
         'The script below is only for when you cannot do that (different times, off',
         'network). Windows will not let one PC switch on remote help for another, so',
