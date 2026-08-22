@@ -27,6 +27,12 @@
 
 $script:MatriseHelperAccount = 'MatriseHelp'
 
+# Windows caps a local account description at 48 characters and New-LocalUser
+# throws rather than truncating, which kills the whole setup at its first step.
+# Defined once so the generated script and the Host button cannot drift apart
+# or past the limit.
+$script:MatriseHelperDesc = 'Matrise remote help - safe to delete'
+
 function New-MatriseCodePassword {
     param([int]$Length = 24)
     # Ambiguous characters left out so a code read aloud or retyped still works.
@@ -168,7 +174,7 @@ function New-MatriseHandshakeScript {
         '    Write-Host "   reused $acct and gave it a new password"',
         '} else {',
         '    New-LocalUser -Name $acct -Password $sec -FullName "Matrise remote help" `',
-        '        -Description "Created by Matrise so another PC in this house can help. Safe to delete." `',
+        "        -Description `"$script:MatriseHelperDesc`" ``",
         '        -PasswordNeverExpires -AccountNeverExpires | Out-Null',
         '    Write-Host "   created $acct"',
         '}',

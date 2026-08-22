@@ -268,7 +268,7 @@ function Initialize-MatriseHostSide {
             & $add $true "Reused the $Account account with a fresh password."
         } else {
             New-LocalUser -Name $Account -Password $sec -FullName 'Matrise remote help' `
-                -Description 'Created by Matrise so another PC can help. Safe to delete.' `
+                -Description $script:MatriseHelperDesc `
                 -PasswordNeverExpires -AccountNeverExpires | Out-Null
             & $add $true "Created the $Account account."
         }

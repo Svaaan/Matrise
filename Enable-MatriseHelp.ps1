@@ -48,7 +48,7 @@ if (Get-LocalUser -Name $acct -ErrorAction SilentlyContinue) {
     Write-Host "   reused $acct and gave it a new password"
 } else {
     New-LocalUser -Name $acct -Password $sec -FullName "Matrise remote help" `
-        -Description "Created by Matrise so another PC in this house can help. Safe to delete." `
+        -Description "Matrise remote help - safe to delete" `
         -PasswordNeverExpires -AccountNeverExpires | Out-Null
     Write-Host "   created $acct"
 }

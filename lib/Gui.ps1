@@ -1243,6 +1243,23 @@ function Invoke-MxSelfTestPhase1 {
         Write-MxCheck 'handshake script' $false $_.Exception.Message
     }
 
+    # Bind the exact New-LocalUser call the Host button and the generated
+    # script both make. -WhatIf still runs parameter validation, so this catches
+    # a too-long description without creating anything. Windows caps the
+    # description at 48 characters and throws rather than truncating, which
+    # killed host setup at its very first step.
+    try {
+        $pwTest = ConvertTo-SecureString (New-MatriseCodePassword) -AsPlainText -Force
+        New-LocalUser -Name $script:MatriseHelperAccount -Password $pwTest `
+            -FullName 'Matrise remote help' -Description $script:MatriseHelperDesc `
+            -PasswordNeverExpires -AccountNeverExpires -WhatIf -ErrorAction Stop | Out-Null
+        Write-MxCheck 'helper account' $true `
+            "arguments bind (name $($script:MatriseHelperAccount.Length), description $($script:MatriseHelperDesc.Length) chars)"
+    }
+    catch {
+        Write-MxCheck 'helper account' $false $_.Exception.Message
+    }
+
     # Reading the trusted list must never sit on the UI thread waiting for a
     # service that is not running. Home setup opens with this.
     $swT = [System.Diagnostics.Stopwatch]::StartNew()
