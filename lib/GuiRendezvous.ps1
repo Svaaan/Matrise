@@ -212,6 +212,65 @@ function Show-MxApproveDialog {
     ($r -eq [System.Windows.Forms.DialogResult]::OK)
 }
 
+# Sends the connection request to the selected host. One code path for the
+# button, double-click and the auto-connect countdown.
+function Invoke-MxGuestAsk {
+    $S = $script:MxRvGuestState
+    $say = $script:MxRvGuestSay
+    Stop-MxGuestAutoAsk
+
+    if ($S.List.SelectedItems.Count -eq 0) { & $say 'Pick a computer in the list first.'; return }
+    $sel  = $S.List.SelectedItems[0]
+    $addr = $sel.SubItems[2].Text
+
+    $S.KeyPair = New-MatriseRvKeyPair
+    $S.Nonce   = New-MatriseRvNonce
+    $S.Code    = Get-MatriseRvCode -Modulus $S.KeyPair.Modulus -Nonce $S.Nonce
+    $S.Asked   = $sel.Text
+
+    $S.CodeLbl.Text = "Your code: $($S.Code)"
+    & $say ''
+    & $say "Asked $($sel.Text) to let you connect."
+    & $say "Read them this number: $($S.Code) - it must match what they see."
+    & $say 'Waiting for them to press Approve...'
+
+    try {
+        Send-MatriseRvDatagram -Address $addr -Port $script:MxRvHostPort `
+            -Payload (New-MatriseRvRequest -KeyPair $S.KeyPair -Nonce $S.Nonce)
+    }
+    catch { & $say ("Could not send the request: " + $_.Exception.Message) }
+}
+
+function Start-MxGuestAutoAsk {
+    $S = $script:MxRvGuestState
+    $say = $script:MxRvGuestSay
+    $S.AutoLeft = 3
+    $S.AskBtn.Text = "Cancel auto-connect"
+    & $say "Only one PC is offering - connecting automatically in 3s (press the button to stop)."
+
+    $t = New-Object System.Windows.Forms.Timer
+    $t.Interval = 1000
+    $t.Add_Tick({
+        $St = $script:MxRvGuestState
+        $St.AutoLeft--
+        if ($St.AutoLeft -le 0) {
+            Stop-MxGuestAutoAsk
+            Invoke-MxGuestAsk
+        } else {
+            $St.CodeLbl.Text = "Connecting in $($St.AutoLeft)s..."
+        }
+    })
+    $S.AutoTimer = $t
+    $t.Start()
+}
+
+function Stop-MxGuestAutoAsk {
+    $S = $script:MxRvGuestState
+    if ($S.AutoTimer) { $S.AutoTimer.Stop(); $S.AutoTimer.Dispose(); $S.AutoTimer = $null }
+    if ($S.AskBtn) { $S.AskBtn.Text = 'Ask to connect' }
+    if ($S.CodeLbl -and $S.CodeLbl.Text -like 'Connecting in*') { $S.CodeLbl.Text = '' }
+}
+
 # =========================================================================
 #  GUEST - the PC doing the helping
 # =========================================================================
@@ -261,11 +320,13 @@ function Show-MxGuestWindow {
     $d.CancelButton = $btnClose
 
     $script:MxRvGuestState = [pscustomobject]@{
-        Listener = $null; Drain = $null
+        Listener = $null; Drain = $null; AutoTimer = $null
         KeyPair = $null; Nonce = ''; Code = ''
         Seen = @{}
         Lines = New-Object System.Collections.ArrayList
         Asked = ''
+        List = $list; CodeLbl = $codeLbl; AskBtn = $btnAsk
+        AutoLeft = 0
     }
     $G = $script:MxRvGuestState
 
@@ -277,30 +338,19 @@ function Show-MxGuestWindow {
         $status.SelectionStart = $status.TextLength
         $status.ScrollToCaret()
     }
+    $script:MxRvGuestSay = $say
 
+    # One state-aware handler: during the auto-connect countdown the button
+    # cancels it; otherwise it sends the request. Double-click always asks.
     $btnAsk.Add_Click({
-        $G2 = $script:MxRvGuestState
-        if ($list.SelectedItems.Count -eq 0) { & $say 'Pick a computer in the list first.'; return }
-        $sel = $list.SelectedItems[0]
-        $addr = $sel.SubItems[2].Text
-
-        $G2.KeyPair = New-MatriseRvKeyPair
-        $G2.Nonce   = New-MatriseRvNonce
-        $G2.Code    = Get-MatriseRvCode -Modulus $G2.KeyPair.Modulus -Nonce $G2.Nonce
-        $G2.Asked   = $sel.Text
-
-        $codeLbl.Text = "Your code: $($G2.Code)"
-        & $say ''
-        & $say "Asked $($sel.Text) to let you connect."
-        & $say "Read them this number: $($G2.Code) - it must match what they see."
-        & $say 'Waiting for them to press Approve...'
-
-        try {
-            Send-MatriseRvDatagram -Address $addr -Port $script:MxRvHostPort `
-                -Payload (New-MatriseRvRequest -KeyPair $G2.KeyPair -Nonce $G2.Nonce)
+        if ($script:MxRvGuestState.AutoTimer) {
+            Stop-MxGuestAutoAsk
+            & $script:MxRvGuestSay 'Auto-connect cancelled. Pick a PC and press Ask to connect when ready.'
+        } else {
+            Invoke-MxGuestAsk
         }
-        catch { & $say ("Could not send the request: " + $_.Exception.Message) }
     })
+    $list.Add_DoubleClick({ Invoke-MxGuestAsk })
 
     $d.Add_Shown({
         Hide-MxPop
@@ -336,6 +386,14 @@ function Show-MxGuestWindow {
                     [void]$list.Items.Add($it)
                     if ($list.SelectedItems.Count -eq 0) { $it.Selected = $true }
                     & $say "Found $($m.h) (signed in as $($m.u))"
+
+                    # Fewer clicks: if exactly one PC is offering and we have
+                    # not asked anyone yet, start a short countdown and connect
+                    # automatically. Multiple PCs, or an already-sent request,
+                    # leave it to the person to choose.
+                    if ($list.Items.Count -eq 1 -and -not $S.Asked -and -not $S.AutoTimer) {
+                        Start-MxGuestAutoAsk
+                    }
                 }
                 elseif ($m.t -eq 'grant') {
                     try {
@@ -395,6 +453,7 @@ function Show-MxGuestWindow {
 
     $d.Add_FormClosing({
         $S = $script:MxRvGuestState
+        if ($S.AutoTimer) { $S.AutoTimer.Stop(); $S.AutoTimer.Dispose(); $S.AutoTimer = $null }
         if ($S.Drain) { $S.Drain.Stop(); $S.Drain.Dispose() }
         if ($S.Listener) { Stop-MatriseRvListener -Listener $S.Listener }
     })

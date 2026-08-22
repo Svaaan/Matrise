@@ -10,6 +10,7 @@
 #
 #   .\Matrise.ps1 -ExportJea <dir>       generate the JEA endpoint from catalog + policy
 #   .\Matrise.ps1 -Requests              list access requests
+#   .\Matrise.ps1 -VerifyAudit           check the audit log has not been tampered with
 #   .\Matrise.ps1 -Approve <id> [-Minutes 60] [-Comment "..."]
 #   .\Matrise.ps1 -Deny    <id>          [-Comment "..."]
 #
@@ -26,6 +27,7 @@ param(
     [string]$ExportJea,
     [switch]$Requests,
     [switch]$Unblock,
+    [switch]$VerifyAudit,
     [string]$Approve,
     [string]$Deny,
     [int]$Minutes = 0,
@@ -75,6 +77,46 @@ if ($Unblock) {
         }
     Write-Output "Unblocked $n file(s) under $root."
     Write-Output 'Windows marks anything arriving by browser, email or zip as untrusted.'
+    exit 0
+}
+
+# ---- headless: verify the audit hash chain ------------------------------
+if ($VerifyAudit) {
+    Write-Output ''
+    Write-Output 'MATRISE AUDIT VERIFICATION'
+    Write-Output ('=' * 64)
+    Write-Output 'Each record is fingerprinted and carries the fingerprint of the one'
+    Write-Output 'before it. Any deleted, altered or reordered entry breaks the chain'
+    Write-Output 'from that point on. This checks every link.'
+    Write-Output ''
+
+    $dirs = @((Join-Path $root 'audit'))
+    if ($policy.auditLog) { $dirs += $policy.auditLog }
+
+    $any = $false
+    $bad = 0
+    foreach ($d in $dirs) {
+        $results = Test-MatriseAuditDir -Dir $d
+        if (@($results).Count -eq 0) { continue }
+        Write-Output "In $d :"
+        foreach ($r in $results) {
+            $any = $true
+            $mark = $(if ($r.Ok) { 'OK  ' } else { 'FAIL'; $bad++ })
+            Write-Output ("  [{0}] {1}" -f $mark, (Split-Path $r.Path -Leaf))
+            Write-Output ("         {0}" -f $r.Reason)
+            if (-not $r.Ok -and $r.FirstBreakLine -gt 0) {
+                Write-Output ("         first broken entry: line $($r.FirstBreakLine)")
+            }
+        }
+        Write-Output ''
+    }
+
+    if (-not $any) { Write-Output 'No audit files found yet.'; exit 0 }
+    if ($bad -gt 0) {
+        Write-Output "TAMPERING DETECTED in $bad file(s). Treat the affected logs as compromised."
+        exit 2
+    }
+    Write-Output 'All audit chains intact. Nothing has been altered.'
     exit 0
 }
 

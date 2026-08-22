@@ -1305,6 +1305,52 @@ function Invoke-MxSelfTestPhase1 {
         Write-MxCheck 'handshake script' $false $_.Exception.Message
     }
 
+    # Guest auto-connect: with one host offering it should start a countdown,
+    # and cancelling must stop the timer and restore the button. Exercised on
+    # mock controls so no live host is needed.
+    try {
+        $mockList = New-Object System.Windows.Forms.ListView
+        $mockBtn  = New-Object System.Windows.Forms.Button
+        $mockLbl  = New-Object System.Windows.Forms.Label
+        $script:MxRvGuestSay = { param($t) }
+        $script:MxRvGuestState = [pscustomobject]@{
+            AutoTimer = $null; AutoLeft = 0; Asked = ''
+            List = $mockList; AskBtn = $mockBtn; CodeLbl = $mockLbl
+        }
+        Start-MxGuestAutoAsk
+        $started = ($null -ne $script:MxRvGuestState.AutoTimer) -and ($mockBtn.Text -eq 'Cancel auto-connect')
+        Stop-MxGuestAutoAsk
+        $stopped = ($null -eq $script:MxRvGuestState.AutoTimer) -and ($mockBtn.Text -eq 'Ask to connect')
+        $mockList.Dispose(); $mockBtn.Dispose(); $mockLbl.Dispose()
+        $script:MxRvGuestState = $null
+        Write-MxCheck 'auto-connect' ($started -and $stopped) `
+            "countdown starts ($started) and cancels cleanly ($stopped)"
+    }
+    catch { Write-MxCheck 'auto-connect' $false $_.Exception.Message }
+
+    # The audit hash chain must verify when intact and fail when a record is
+    # altered - the whole point is that tampering cannot be hidden.
+    try {
+        $atmp = Join-Path ([System.IO.Path]::GetTempPath()) ("mx-audit-{0}" -f ([guid]::NewGuid().ToString('N').Substring(0,6)))
+        New-Item -ItemType Directory -Path (Join-Path $atmp 'audit') -Force | Out-Null
+        $apol = New-MatriseDefaultPolicy
+        1..3 | ForEach-Object {
+            Write-MatriseAudit -WorkDir $atmp -Policy $apol -Action 'selftest' `
+                -Entry ([pscustomobject]@{ Id="c$_"; Name="c$_"; Impact='read'; Command="x$_" }) `
+                -Target $null -Permission $null | Out-Null
+        }
+        $af = (Get-ChildItem (Join-Path $atmp 'audit') -Filter '*.jsonl')[0].FullName
+        $intact = (Test-MatriseAuditChain -Path $af).Ok
+        $al = Get-Content $af
+        $al[1] = $al[1] -replace '"command":"x2"', '"command":"rm -rf"'
+        Set-Content $af -Value $al -Encoding UTF8
+        $caught = -not (Test-MatriseAuditChain -Path $af).Ok
+        Remove-Item $atmp -Recurse -Force -ErrorAction SilentlyContinue
+        Write-MxCheck 'audit chain' ($intact -and $caught) `
+            "intact log verifies ($intact); altered record is caught ($caught)"
+    }
+    catch { Write-MxCheck 'audit chain' $false $_.Exception.Message }
+
     # A typed command must build into a real entry that Start-MxEntry accepts,
     # and it must be policy-gated like any other - not a way around the rules.
     $ce = New-MxCustomEntry -Shell 'ps' -Command 'Get-Date'

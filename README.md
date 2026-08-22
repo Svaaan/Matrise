@@ -450,6 +450,32 @@ Windows 11 Home cannot receive RDP, so Quick Assist is the right tool for home
 machines regardless.
 
 ---
+## Tamper-evident audit log
+
+Every action - run, refusal, request, approval - is written to an append-only
+audit log *before* it happens. The log is a **hash chain**: each record carries
+the SHA-256 fingerprint of the record before it, so the entries are linked like
+a chain.
+
+That makes it tamper-evident. Deleting, altering or reordering any past entry
+changes its fingerprint, which breaks the `prevHash` stored in the next entry,
+and every fingerprint after that. You cannot quietly remove "ran a destructive
+command at 3pm" without the break being provable.
+
+```bash
+powershell -File Matrise.ps1 -VerifyAudit
+```
+
+walks every chain file and reports either "intact, verified end to end" or the
+exact line of the first tampered entry, exiting 2 so a scheduled job can alert
+on it. Three tamper types are caught and covered by a self-test: altered content
+(fingerprint mismatch), a removed or inserted entry (broken link), and reordered
+entries (broken link). A new process appending later links to the existing tail,
+so the chain survives across sessions; a new month starts a fresh chain file.
+
+This is governance you can prove to a security team, not just claim.
+
+---
 ## Safety
 
 - Read-only commands run without ceremony. Anything that changes the system shows

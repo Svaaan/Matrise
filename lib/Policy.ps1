@@ -183,6 +183,69 @@ function Resolve-MatriseRunPermission {
 # Written before execution, not after, so an attempt that hangs or crashes is
 # still on the record. Local always; the shared copy is best-effort.
 
+# The audit log is a HASH CHAIN. Each record carries the fingerprint of the one
+# before it, so deleting, altering or reordering any past entry breaks every
+# fingerprint after it - tampering cannot be hidden. Test-MatriseAuditChain
+# walks the chain and names the first broken link.
+
+$script:MatriseAuditGenesis = 'MATRISE-AUDIT-GENESIS-v1'
+
+# The fields that are fingerprinted, in a fixed order. prevHash and hash are
+# metadata added around this and are not themselves inside the canonical body.
+$script:MatriseAuditFields = @(
+    'seq','timeUtc','operator','console','action','entryId','entryName',
+    'impact','command','target','targetMode','policy','decision','rule','note'
+)
+
+function Get-MatriseSha256Hex {
+    param([string]$Text)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $b = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Text))
+        -join ($b | ForEach-Object { $_.ToString('x2') })
+    }
+    finally { $sha.Dispose() }
+}
+
+# Deterministic string over the fingerprinted fields. Only determinism matters
+# (write and verify call this same function), not that it be parseable - the
+# record-separator byte keeps fields unambiguous even with newlines in values.
+function Get-MatriseAuditCanonical {
+    param($Record)
+    $rs = [char]0x1e
+    ($script:MatriseAuditFields | ForEach-Object {
+        $v = $Record.$_
+        if ($null -eq $v) { $v = '' }
+        "$_=$v"
+    }) -join $rs
+}
+
+function Get-MatriseAuditRecordHash {
+    param($Record, [string]$PrevHash)
+    Get-MatriseSha256Hex ($PrevHash + [char]0x1e + (Get-MatriseAuditCanonical -Record $Record))
+}
+
+# The last sequence number and hash already in a chain file, so the next record
+# links to it. A fresh or missing file starts at seq 0 from the genesis value.
+function Get-MatriseAuditTail {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return @{ Seq = -1; Hash = $script:MatriseAuditGenesis } }
+    $last = $null
+    foreach ($l in (Get-Content $Path -ErrorAction SilentlyContinue)) {
+        if ($l.Trim()) { $last = $l }
+    }
+    if (-not $last) { return @{ Seq = -1; Hash = $script:MatriseAuditGenesis } }
+    try {
+        $o = $last | ConvertFrom-Json
+        return @{ Seq = [int]$o.seq; Hash = [string]$o.hash }
+    }
+    catch {
+        # An unparseable tail means the file was hand-edited. Do not silently
+        # start a new chain over it - keep linking so the verifier still trips.
+        return @{ Seq = 999999; Hash = 'UNREADABLE-TAIL' }
+    }
+}
+
 function Write-MatriseAudit {
     param(
         [string]$WorkDir,
@@ -194,7 +257,16 @@ function Write-MatriseAudit {
         [string]$Note = ''
     )
 
+    $dir = Join-Path $WorkDir 'audit'
+    try { New-Item -ItemType Directory -Path $dir -Force -ErrorAction SilentlyContinue | Out-Null } catch { }
+    $local = Join-Path $dir ("matrise-audit-{0}.jsonl" -f (Get-Date -Format 'yyyyMM'))
+
+    # The local file is the source of truth for the chain position; the shared
+    # copy gets the identical line, so both are independently verifiable.
+    $tail = Get-MatriseAuditTail -Path $local
+
     $rec = [pscustomobject]@{
+        seq        = $tail.Seq + 1
         timeUtc    = (Get-Date).ToUniversalTime().ToString('o')
         operator   = "$env:USERDOMAIN\$env:USERNAME"
         console    = $env:COMPUTERNAME
@@ -209,16 +281,13 @@ function Write-MatriseAudit {
         decision   = $(if ($Permission) { $Permission.Action } else { '' })
         rule       = $(if ($Permission) { $Permission.Rule } else { '' })
         note       = $Note
+        prevHash   = $tail.Hash
+        hash       = ''
     }
+    $rec.hash = Get-MatriseAuditRecordHash -Record $rec -PrevHash $tail.Hash
 
     $line = ($rec | ConvertTo-Json -Compress)
-
-    try {
-        $dir = Join-Path $WorkDir 'audit'
-        New-Item -ItemType Directory -Path $dir -Force -ErrorAction SilentlyContinue | Out-Null
-        $local = Join-Path $dir ("matrise-audit-{0}.jsonl" -f (Get-Date -Format 'yyyyMM'))
-        Add-Content -Path $local -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue
-    } catch { }
+    try { Add-Content -Path $local -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue } catch { }
 
     if ($Policy -and $Policy.auditLog) {
         try {
@@ -227,6 +296,66 @@ function Write-MatriseAudit {
         } catch { }
     }
     $rec
+}
+
+# Walks one chain file end to end. Returns a result object; Ok is $true only if
+# every link, every fingerprint and every sequence number checks out.
+function Test-MatriseAuditChain {
+    param([string]$Path)
+
+    $result = [pscustomobject]@{
+        Path = $Path; Ok = $true; Records = 0
+        FirstBreakLine = 0; Reason = ''
+    }
+    if (-not (Test-Path $Path)) { $result.Ok = $false; $result.Reason = 'file not found'; return $result }
+
+    $prev = $script:MatriseAuditGenesis
+    $i = 0
+    foreach ($line in (Get-Content $Path -ErrorAction SilentlyContinue)) {
+        if (-not $line.Trim()) { continue }
+        $i++
+
+        $o = $null
+        try { $o = $line | ConvertFrom-Json } catch {
+            $result.Ok = $false; $result.FirstBreakLine = $i
+            $result.Reason = 'line is not valid JSON - the file was edited'
+            return $result
+        }
+
+        if ([string]$o.prevHash -ne $prev) {
+            $result.Ok = $false; $result.FirstBreakLine = $i
+            $result.Reason = "broken link: this record's prevHash does not match the previous record's hash (an entry was inserted, removed or reordered)"
+            return $result
+        }
+        if ([int]$o.seq -ne ($i - 1)) {
+            $result.Ok = $false; $result.FirstBreakLine = $i
+            $result.Reason = "sequence number is $($o.seq) but should be $($i-1)"
+            return $result
+        }
+        $recomputed = Get-MatriseAuditRecordHash -Record $o -PrevHash $o.prevHash
+        if ($recomputed -ne [string]$o.hash) {
+            $result.Ok = $false; $result.FirstBreakLine = $i
+            $result.Reason = 'content was altered: the record no longer matches its own fingerprint'
+            return $result
+        }
+        $prev = [string]$o.hash
+    }
+
+    $result.Records = $i
+    if ($i -eq 0) { $result.Reason = 'empty (no records yet)' }
+    else { $result.Reason = "intact: $i record(s), chain verified end to end" }
+    $result
+}
+
+# Verifies every chain file under an audit directory.
+function Test-MatriseAuditDir {
+    param([string]$Dir)
+    $out = New-Object System.Collections.ArrayList
+    if (-not (Test-Path $Dir)) { return , $out }
+    foreach ($f in (Get-ChildItem $Dir -Filter '*audit*.jsonl' -File -ErrorAction SilentlyContinue | Sort-Object Name)) {
+        [void]$out.Add((Test-MatriseAuditChain -Path $f.FullName))
+    }
+    , $out
 }
 
 function Format-MatrisePolicySummary {
