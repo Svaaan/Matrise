@@ -457,6 +457,14 @@ function Get-MatriseExplainTable {
         'Sets up help between two PCs in a house, where there is no company network to arrange it for you.' `
         'They run one script, they send you one code, you paste it. Nothing else needs typing.'
 
+    & $e 'ui.guest' `
+        'Finds PCs on your home network that have pressed Host, and asks one of them to let you in. They approve on their screen; nothing is typed on either side.' `
+        'Both of you should see the same six-digit number. Read it to them before they approve - if it differs, someone else on the network is trying to get in.'
+
+    & $e 'ui.host' `
+        'Offers this PC up to be helped. It becomes visible to the other machine, and when they ask, you get a box showing who it is and a number to check.' `
+        'Nothing is shared until you press Approve. Closing the window stops it immediately.'
+
     & $e 'ui.findbar' `
         'The search bar for the board.' `
         'Ctrl+F brings you here from anywhere in the window.'

@@ -1862,6 +1862,20 @@ function Show-MatriseWindow {
     $btnHome.Location = New-Object System.Drawing.Point(590, 5)
     $tbar.Controls.Add($btnHome)
 
+    $btnGuest = New-MxButton -Text 'Find a PC' -Width 92 -Tip (Get-MatriseTip 'ui.guest') -OnClick {
+        Write-MxTiming 'Guest window opened'
+        Show-MxGuestWindow
+    }
+    $btnGuest.Location = New-Object System.Drawing.Point(698, 5)
+    $tbar.Controls.Add($btnGuest)
+
+    $btnHost = New-MxButton -Text 'Host me' -Width 84 -Tip (Get-MatriseTip 'ui.host') -OnClick {
+        Write-MxTiming 'Host window opened'
+        Show-MxHostWindow
+    }
+    $btnHost.Location = New-Object System.Drawing.Point(794, 5)
+    $tbar.Controls.Add($btnHost)
+
     $btnMsg = New-MxButton -Text 'Send message' -Width 118 -Tip (Get-MatriseTip 'ui.sendmsg') -OnClick {
         Invoke-MxSendMessage
     }
