@@ -742,6 +742,41 @@ function Open-MxFile {
     $script:MxStatus.Text = "loaded $([math]::Round($txt.Length/1KB)) KB - press Analyze"
 }
 
+# Inspect a file: pull its metadata onto the board (where it came from, whether
+# it is signed, fingerprints, hidden streams, EXIF/GPS, document macros, program
+# info). Hashing a large file can take a moment, so it runs off the UI thread;
+# the report streams onto the board and the analyzer runs over it when done.
+function Invoke-MxInspectFile {
+    param([string]$Path)
+    if (-not $Path) {
+        $dlg = New-Object System.Windows.Forms.OpenFileDialog
+        $dlg.Title = 'Inspect a file - pick anything (nothing is uploaded)'
+        $dlg.Filter = 'All files (*.*)|*.*'
+        if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+        $Path = $dlg.FileName
+    }
+    if (-not (Test-Path -LiteralPath $Path)) { $script:MxStatus.Text = "not found: $Path"; return }
+
+    Add-MxBoardLine ''
+    Update-MxBoardFlush
+    $work = {
+        param($queue, $state, $libDir, $path)
+        try {
+            . (Join-Path $libDir 'Meta.ps1')
+            foreach ($line in ((Get-MatriseFileMetaReport -Path $path) -split "`r?`n")) { $queue.Enqueue($line) }
+        }
+        catch { $queue.Enqueue("  inspect failed: $($_.Exception.Message)") }
+        finally { $state['Done'] = $true }
+    }
+    [void](Start-MxBackground -Work $work -Label ("inspecting " + [System.IO.Path]::GetFileName($Path)) -TimeoutSec 180 `
+        -Arguments @((Join-Path $script:MxWorkDir 'lib'), $Path) `
+        -OnDone {
+            Update-MxBoardFlush
+            if ($script:MxAutoScan -and $script:MxAutoScan.Checked) { Invoke-MxAnalyze -Quiet }
+            $script:MxStatus.Text = 'file inspected'
+        })
+}
+
 # ------------------------------------------------------------ input dialog -
 function Show-MxInputDialog {
     param([string]$Title, [string]$Question, [string]$Default = '')
@@ -1458,6 +1493,28 @@ function Invoke-MxSelfTestPhase1 {
     }
     catch { Write-MxCheck 'devices' $false $_.Exception.Message }
 
+    # File inspector, offline. A real file gets identity + fingerprints, and a
+    # file tagged as downloaded must surface the mark of the web AND be caught by
+    # the analyzer - that end-to-end path (extract -> board marker -> finding) is
+    # the whole point, so it is worth a guard.
+    try {
+        $selfRep = Get-MatriseFileMetaReport -Path (Join-Path $script:MxWorkDir 'lib\Meta.ps1')
+        $hasCore = ($selfRep -match 'FINGERPRINTS') -and ($selfRep -match 'SHA256') -and ($selfRep -match 'SIGNATURE')
+
+        $itmp = Join-Path ([System.IO.Path]::GetTempPath()) ("mx-insp-{0}.txt" -f ([guid]::NewGuid().ToString('N').Substring(0,6)))
+        Set-Content -LiteralPath $itmp -Value 'pretend download' -Encoding UTF8
+        Set-Content -LiteralPath $itmp -Stream 'Zone.Identifier' `
+            -Value "[ZoneTransfer]`r`nZoneId=3`r`nHostUrl=http://selftest.example/x.txt"
+        $dlRep  = Get-MatriseFileMetaReport -Path $itmp
+        $hasMotw = ($dlRep -match 'DOWNLOADED FROM THE INTERNET') -and ($dlRep -match 'selftest\.example')
+        $flagged = @(Invoke-MatriseAnalysis -Text $dlRep | Where-Object { $_.RuleId -eq 'meta-motw' }).Count -gt 0
+        Remove-Item $itmp -Force -ErrorAction SilentlyContinue
+
+        Write-MxCheck 'file inspect' ($hasCore -and $hasMotw -and $flagged) `
+            "reads fingerprints/signature ($hasCore), catches mark-of-the-web and the analyzer flags it ($($hasMotw -and $flagged))"
+    }
+    catch { Write-MxCheck 'file inspect' $false $_.Exception.Message }
+
     # Bind the exact New-LocalUser call the Host button and the generated
     # script both make. -WhatIf still runs parameter validation, so this catches
     # a too-long description without creating anything. Windows caps the
@@ -1736,6 +1793,24 @@ function Show-MatriseWindow {
     $board.ScrollBars  = 'Both'
     $board.MaxLength   = [int]::MaxValue
     $script:MxBoard = $board
+
+    # Drop a file onto the board to inspect it - the "upload something" gesture,
+    # except nothing is uploaded; the file is read locally. One at a time so a
+    # dropped folder full of files does not queue dozens of background jobs.
+    $board.AllowDrop = $true
+    $board.Add_DragEnter({
+        param($sender, $e)
+        if ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) {
+            $e.Effect = [System.Windows.Forms.DragDropEffects]::Copy
+        }
+    })
+    $board.Add_DragDrop({
+        param($sender, $e)
+        $files = @($e.Data.GetData([System.Windows.Forms.DataFormats]::FileDrop))
+        $file  = @($files | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }) | Select-Object -First 1
+        if ($file) { Invoke-MxInspectFile -Path $file }
+        elseif (@($files).Count) { $script:MxStatus.Text = 'drop a file, not a folder, to inspect it' }
+    })
 
     # --- header: which command, and the literal line it runs --------------
     $head = New-Object System.Windows.Forms.Panel
@@ -2063,6 +2138,9 @@ function Show-MatriseWindow {
     $btnNetScan = New-MxButton -Text 'Scan network' -Width 108 -Tip (Get-MatriseTip 'ui.devices') -OnClick {
         Show-MxDevicesWindow
     }
+    $btnInspect = New-MxButton -Text 'Inspect file...' -Width 112 -Tip (Get-MatriseTip 'ui.inspect') -OnClick {
+        Invoke-MxInspectFile
+    }
     $btnAgent = New-MxButton -Text 'Ask Claude' -Width 98 -Tip (Get-MatriseTip 'ui.agent') -OnClick { Invoke-MxAgent }
 
     $btnChunk = New-MxButton -Text 'Copy next part' -Width 116 -Tip (Get-MatriseTip 'ui.chunk') -OnClick { Copy-MxNextChunk }
@@ -2082,7 +2160,7 @@ function Show-MatriseWindow {
     Register-MxHover -Control $autoScan -Text (Get-MatriseTip 'ui.autoscan')
     $script:MxAutoScan = $autoScan
 
-    $bar.Controls.AddRange(@($btnCmd, $btnCustom, $btnNetScan, $sep1,
+    $bar.Controls.AddRange(@($btnCmd, $btnCustom, $btnNetScan, $btnInspect, $sep1,
                              $btnAgent, $btnChunk, $autoCopy, $autoScan))
 
     # ------------------------------------------------------------ target bar -

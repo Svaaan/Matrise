@@ -48,6 +48,7 @@ $env:MATRISE_HOME = $root
 . (Join-Path $root 'lib\Catalog.ps1')
 . (Join-Path $root 'lib\Runner.ps1')
 . (Join-Path $root 'lib\Analyzer.ps1')
+. (Join-Path $root 'lib\Meta.ps1')
 . (Join-Path $root 'lib\Agent.ps1')
 . (Join-Path $root 'lib\Target.ps1')
 . (Join-Path $root 'lib\Peer.ps1')

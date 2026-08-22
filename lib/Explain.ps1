@@ -473,6 +473,10 @@ function Get-MatriseExplainTable {
         'Type any command yourself instead of picking one from the list, and run it on whichever machine you are pointed at.' `
         'Handy for a one-off you do not have a button for. It still goes through the same safety check and audit as the built-in commands.'
 
+    & $e 'ui.inspect' `
+        'Pick a file (or drag one onto the board) and Matrise reads everything it quietly carries: where it was downloaded from, whether it is signed, its fingerprints, hidden data streams, a photo''s camera and GPS location, a document''s author and whether it hides macros, a program''s details. Nothing is uploaded - it is all read on this PC.' `
+        'Great for a suspicious email attachment ("where did this really come from, and does it hide macros?") or a photo before you share it ("does it reveal where I live?"). The result lands on the board and the analyzer flags anything worrying.'
+
     & $e 'ui.devices' `
         'A living list of everything on your home network - each device''s name, IP, hardware ID and maker, whether it is online right now, and what services it exposes.' `
         'Name the devices you recognise; anything left as NEW is one you have not named, which is worth checking if you did not expect it. You can open a device''s web page or see what ports it has open.'

@@ -205,6 +205,37 @@ function Get-MatriseRules {
         -Pattern 'The system has rebooted without cleanly shutting down|BugCheck|previous system shutdown at' `
         -Why 'The machine crashed rather than shut down. Repeated occurrences point at failing RAM, a bad driver, or overheating.' -MaxHits 200 -Aggregate)
 
+    # --- from the file inspector (Inspect file / drag a file onto the board) ---
+    & $a (New-MatriseRule -Id 'meta-macro' -Severity 'High' `
+        -Title 'Document hides a macro project' `
+        -Pattern 'CONTAINS MACROS' `
+        -Why 'A document that carries macros is how most malware arrives by email. Only enable content if you trust who sent it AND you expected a document that needs macros. If it came from the internet (see the origin line), treat it as hostile until proven otherwise.')
+
+    & $a (New-MatriseRule -Id 'meta-sig-invalid' -Severity 'High' `
+        -Title 'File changed after it was signed' `
+        -Pattern 'SIGNATURE INVALID' `
+        -Why 'The digital signature does not match the file, which means it was altered after the vendor signed it. A tampered installer or patched program is a classic supply-chain trick. Do not run it; re-download from the real source.')
+
+    & $a (New-MatriseRule -Id 'meta-unsigned-exe' -Severity 'Medium' `
+        -Title 'Unsigned program' `
+        -Pattern 'UNSIGNED PROGRAM' `
+        -Why 'Reputable software is almost always digitally signed. An unsigned executable, especially one downloaded from the internet, deserves a hard look before you run it - check the maker and the fingerprints against the official source.')
+
+    & $a (New-MatriseRule -Id 'meta-ads' -Severity 'Medium' `
+        -Title 'File carries a hidden data stream' `
+        -Pattern 'HIDDEN STREAM:' `
+        -Why 'Data hidden in an alternate data stream rides along invisibly in Explorer. Occasionally legitimate, but it is a well-known place to stash a second payload or exfiltrated data. Worth knowing what it is.')
+
+    & $a (New-MatriseRule -Id 'meta-gps' -Severity 'Low' `
+        -Title 'Photo records where it was taken' `
+        -Pattern 'GPS LOCATION:' `
+        -Why 'This image embeds the exact GPS coordinates where it was taken. If you share it, you may be revealing your home, workplace, or a child''s school. Strip the location before posting if that is not intended.')
+
+    & $a (New-MatriseRule -Id 'meta-motw' -Severity 'Info' `
+        -Title 'File came from the internet' `
+        -Pattern 'DOWNLOADED FROM THE INTERNET' `
+        -Why 'Windows tagged this as saved from a remote source; the origin lines show from where. Not bad on its own, but it raises the stakes on everything else here - a downloaded document with macros, or an unsigned downloaded program, is far more suspect than the same file made locally.')
+
     $script:MatriseRules = $r
     $r
 }
