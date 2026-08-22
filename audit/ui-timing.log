@@ -1,1 +1,25 @@
-﻿15:37:25.092  home setup: closed
+﻿16:07:40.204  home setup: opening dialog
+16:07:40.256  home setup: window shown
+16:07:40.278  home setup: script written  (7 ms)
+16:07:40.341  home setup: trusted list read  (51 ms)
+16:07:40.883  home setup: closed
+16:09:08.651  home setup: opening dialog
+16:09:08.701  home setup: window shown
+16:09:08.727  home setup: script written  (12 ms)
+16:09:08.790  home setup: trusted list read  (50 ms)
+16:09:09.338  home setup: closed
+16:10:00.163  home setup: opening dialog
+16:10:00.213  home setup: window shown
+16:10:00.236  home setup: script written  (7 ms)
+16:10:00.298  home setup: trusted list read  (50 ms)
+16:10:00.840  home setup: closed
+16:10:42.898  home setup: opening dialog
+16:10:42.947  home setup: window shown
+16:10:42.968  home setup: script written  (7 ms)
+16:10:43.030  home setup: trusted list read  (50 ms)
+16:10:43.581  home setup: closed
+16:18:32.236  home setup: opening dialog
+16:18:32.306  home setup: window shown
+16:18:32.335  home setup: script written  (8 ms)
+16:18:32.406  home setup: trusted list read  (56 ms)
+16:18:32.942  home setup: closed

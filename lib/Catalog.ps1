@@ -98,6 +98,79 @@ Get-NetUDPEndpoint |
         -Desc 'MAC-to-IP map of the local network. Two IPs sharing one MAC can mean ARP spoofing / a man in the middle.' `
         -Shell 'cmd' -Command 'arp -a')
 
+    & $add (New-MatriseEntry -Id 'net.scan' -Group 'Network' -Section 'Diagnose' `
+        -Name 'Scan network for devices' `
+        -Desc 'Finds every device on this network - IP, MAC address, name and best-guess maker. Takes a few seconds.' `
+        -Shell 'ps' -Timeout 180 -Command @'
+$oui = @{
+    '50-EB-F6'='ASUS'; '1C-86-9A'='Intel'; 'F0-EF-86'='Google'; 'C8-48-05'='Samsung'
+    '1C-69-7A'='Intel'; 'DC-A6-32'='Raspberry Pi'; 'B8-27-EB'='Raspberry Pi'
+    'E4-5F-01'='Raspberry Pi'; '3C-22-FB'='Apple'; 'A4-83-E7'='Apple'; 'F0-18-98'='Apple'
+    '00-1A-11'='Google'; 'D8-3A-DD'='Google'; '00-17-88'='Philips Hue'
+    'EC-FA-BC'='Espressif/IoT'; '2C-F4-32'='Espressif/IoT'; '00-50-56'='VMware'
+    '08-00-27'='VirtualBox'; 'AC-DE-48'='(private)'
+}
+$bases = @()
+foreach ($a in (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+                Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' })) {
+    $p = $a.IPAddress.Split('.'); $bases += "$($p[0]).$($p[1]).$($p[2])."
+}
+$bases = $bases | Select-Object -Unique
+"Scanning $((($bases | ForEach-Object { $_ + '0/24' }) -join ', ')) - priming the network..."
+
+# Ping every address so each device answers at layer 2 and lands in the ARP
+# table. Replies are ignored; the point is to fill the neighbour list.
+$tasks = New-Object System.Collections.ArrayList
+foreach ($b in $bases) { foreach ($i in 1..254) {
+    $ping = New-Object System.Net.NetworkInformation.Ping
+    [void]$tasks.Add($ping.SendPingAsync("$b$i", 800))
+} }
+try { [void][System.Threading.Tasks.Task]::WaitAll($tasks.ToArray(), 6000) } catch { }
+
+$me = @((Get-NetIPAddress -AddressFamily IPv4 |
+         Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' }).IPAddress)
+$gw = (Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
+       Sort-Object RouteMetric | Select-Object -First 1).NextHop
+
+# A real device is any neighbour with a proper unicast MAC, in any state
+# (Reachable / Stale / Probe all count). Drop empties, broadcast and multicast.
+$rows = Get-NetNeighbor -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {
+    $_.LinkLayerAddress -match '^([0-9A-Fa-f]{2}-){5}[0-9A-Fa-f]{2}$' -and
+    $_.LinkLayerAddress -notmatch '^(00-00-00-00-00-00|FF-FF-FF-FF-FF-FF)$' -and
+    $_.LinkLayerAddress -notlike '01-00-5E-*' -and
+    $_.IPAddress -notlike '224.*' -and $_.IPAddress -notlike '239.*' -and
+    $_.IPAddress -notlike '169.254.*' -and $_.IPAddress -ne '255.255.255.255'
+}
+
+$macByIp = @{}
+foreach ($ip in $me) {
+    $mac = (Get-NetAdapter -Physical -ErrorAction SilentlyContinue |
+            Where-Object { $_.Status -eq 'Up' } | Select-Object -First 1).MacAddress
+    if ($mac) { $macByIp[$ip] = $mac }
+}
+foreach ($r in $rows) { if (-not $macByIp.ContainsKey($r.IPAddress)) { $macByIp[$r.IPAddress] = $r.LinkLayerAddress } }
+
+# Resolve all names at once, then wait once - not five seconds per device.
+$ips = @($macByIp.Keys)
+$dns = @{}
+foreach ($ip in $ips) { try { $dns[$ip] = [System.Net.Dns]::GetHostEntryAsync($ip) } catch { } }
+try { [void][System.Threading.Tasks.Task]::WaitAll(@($dns.Values), 3000) } catch { }
+
+$out = foreach ($ip in ($ips | Sort-Object { try { [version]$_ } catch { [version]'0.0.0.0' } })) {
+    $name = ''
+    try { if ($dns[$ip].Status -eq 'RanToCompletion') { $name = ($dns[$ip].Result.HostName -split '\.')[0] } } catch { }
+    $note = ''
+    if ($me -contains $ip) { $note = 'this PC' } elseif ($ip -eq $gw) { $note = 'gateway/router' }
+    $mac = "$($macByIp[$ip])".ToUpper()
+    $vendor = ''; if ($mac.Length -ge 8) { $vendor = $oui[$mac.Substring(0,8)] }
+    [pscustomobject]@{ IP = $ip; MAC = $mac; Vendor = $vendor; Name = $name; Note = $note }
+}
+""
+"DEVICES FOUND: $(@($out).Count)"
+""
+$out | Format-Table -AutoSize | Out-String -Width 200
+'@)
+
     & $add (New-MatriseEntry -Id 'net.route' -Group 'Network' -Section 'Diagnose' `
         -Name 'Routing table' `
         -Desc 'Where traffic actually goes. An unexpected 0.0.0.0 default route means traffic is being redirected.' `

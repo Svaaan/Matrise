@@ -431,15 +431,20 @@ function Show-MxGuestWindow {
                     # window closes itself and the connection banner appears on
                     # the board, so the next thing the user sees is "pick a
                     # command and Run".
+                    #
+                    # The handler uses its $sender (the timer), NEVER a captured
+                    # local - a scriptblock keeps session state, not this frame's
+                    # variables, so a local $done would be null when it fires.
                     $S.Drain.Stop()
-                    $done = New-Object System.Windows.Forms.Timer
-                    $done.Interval = 900
-                    $done.Add_Tick({
-                        $done.Stop(); $done.Dispose()
-                        $script:MxRvGuestForm.Close()
-                        Invoke-MxTestTarget
+                    $script:MxRvDone = New-Object System.Windows.Forms.Timer
+                    $script:MxRvDone.Interval = 900
+                    $script:MxRvDone.Add_Tick({
+                        param($sender, $e)
+                        try { $sender.Stop(); $sender.Dispose() } catch { }
+                        try { if ($script:MxRvGuestForm) { $script:MxRvGuestForm.Close() } } catch { }
+                        try { Invoke-MxTestTarget } catch { }
                     })
-                    $done.Start()
+                    $script:MxRvDone.Start()
                 }
                 elseif ($m.t -eq 'deny') {
                     & $say ''
@@ -456,6 +461,9 @@ function Show-MxGuestWindow {
         if ($S.AutoTimer) { $S.AutoTimer.Stop(); $S.AutoTimer.Dispose(); $S.AutoTimer = $null }
         if ($S.Drain) { $S.Drain.Stop(); $S.Drain.Dispose() }
         if ($S.Listener) { Stop-MatriseRvListener -Listener $S.Listener }
+        # The auto-close timer might already be counting down when the user
+        # closes the window by hand; stop it so it does not fire into a dead form.
+        if ($script:MxRvDone) { try { $script:MxRvDone.Stop(); $script:MxRvDone.Dispose() } catch { }; $script:MxRvDone = $null }
     })
 
     [void]$d.ShowDialog($script:MxForm)

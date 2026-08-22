@@ -504,6 +504,44 @@ so the chain survives across sessions; a new month starts a fresh chain file.
 This is governance you can prove to a security team, not just claim.
 
 ---
+## Scan the network for devices
+
+**Scan network** on the toolbar (also in Network > Diagnose) sweeps the whole
+local network and lists every device that answers: its IP, its MAC (hardware)
+address, the name it goes by, and a best-guess maker read from the MAC. It pings
+every address so each device replies at the network level, then reads the ARP
+table - so it catches even devices that ignore ping. About five seconds.
+
+Because it is an ordinary catalogue command, it also runs against a machine you
+are connected to, so you can scan a remote PC's network too. An unfamiliar
+device is worth identifying.
+
+### The Devices page
+
+**Devices** (the button on the target bar) turns that raw scan into a living
+list you can work with. It is built around one idea: **you name the devices you
+recognise, and anything you have never named is flagged NEW** — a quiet way to
+notice a device you did not put on your own network.
+
+- **Name this... / Forget** — give a device a friendly name and an owner (a
+  person or a room). Names are remembered per MAC in `devices.json`, so future
+  scans show "Kitchen Nest", not `f0-ef-86-27-38-39`. A named device stops being
+  NEW; forgetting it makes it NEW again. The flag is a deliberate state, not
+  something that happens just because a device appeared.
+- **Live online status** — a dot shows who is answering right now, re-checked
+  every few seconds in the background, so the list stays current while it is
+  open. Offline named devices dim; unnamed ones stand out in amber.
+- **Open its page** — many devices (routers, printers, NAS boxes, cameras) serve
+  a web page. This finds it on the usual ports and opens it in your browser.
+- **What it exposes** — a quick port check that lists, in plain words, which
+  services a device is offering the network ("web (secure)", "file sharing",
+  "Remote Desktop", "screen share"). These are the doors other devices can knock
+  on; an unexpected one is worth a second look.
+
+The scan runs in the background, so the window stays responsive while it works,
+and the whole page is offline — nothing leaves your network.
+
+---
 ## Safety
 
 - Read-only commands run without ceremony. Anything that changes the system shows

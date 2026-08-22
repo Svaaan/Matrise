@@ -79,6 +79,10 @@ function Get-MatriseExplainTable {
         'A listening port is like an unlocked door with someone sitting behind it waiting for visitors. This lists every door your PC is currently holding open.' `
         'When you want to know what other machines could connect to. Doors opened to 0.0.0.0 are open to your whole network, not just to you.'
 
+    & $e 'net.scan' `
+        'Knocks on every address on your network and lists what answers - each device''s IP, its permanent hardware ID (MAC address), the name it goes by, and a guess at who made it from the MAC.' `
+        'To see everything on the network at once: your phones, TVs, speakers, the router, and anything you do not recognise. An unfamiliar device is worth identifying.'
+
     & $e 'net.arp' `
         'On your local network every device has a name tag (its address) and a permanent serial number burned into the hardware. This shows which serial number is claiming which name tag.' `
         'If two different name tags share one serial number, something may be pretending to be your router so it can read everything you send.'
@@ -472,6 +476,10 @@ function Get-MatriseExplainTable {
     & $e 'ui.custom' `
         'Type any command yourself instead of picking one from the list, and run it on whichever machine you are pointed at.' `
         'Handy for a one-off you do not have a button for. It still goes through the same safety check and audit as the built-in commands.'
+
+    & $e 'ui.devices' `
+        'A living list of everything on your home network - each device''s name, IP, hardware ID and maker, whether it is online right now, and what services it exposes.' `
+        'Name the devices you recognise; anything left as NEW is one you have not named, which is worth checking if you did not expect it. You can open a device''s web page or see what ports it has open.'
 
     & $e 'ui.findbar' `
         'The search bar for the board.' `

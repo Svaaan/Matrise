@@ -1,1 +1,8 @@
+# Single-file build (-Bundle)
 Matrise.bundle.ps1
+
+# Runtime state - written by the app on the machine it runs on, not source.
+devices.json          # named/known devices (per machine)
+matrise-layout.json   # remembered window size/position
+audit/                # tamper-evident audit log + startup/ui error logs
+reports/              # saved console/command output

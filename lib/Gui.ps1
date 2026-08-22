@@ -1307,6 +1307,30 @@ function Invoke-MxSelfTestPhase1 {
         Write-MxCheck 'handshake script' $false $_.Exception.Message
     }
 
+    # A Timer tick handler must never reference a captured local - the scriptblock
+    # keeps session state, not the frame, so the local is null when it fires. The
+    # guest auto-close used exactly that pattern and threw. Fire a handler shaped
+    # like it (using $sender, not a local) and confirm it runs clean and stops.
+    try {
+        $script:MxTickErr = ''
+        $script:MxTickRan = $false
+        $tk = New-Object System.Windows.Forms.Timer
+        $tk.Interval = 50
+        $tk.Add_Tick({
+            param($sender, $e)
+            try { $sender.Stop(); $sender.Dispose(); $script:MxTickRan = $true }
+            catch { $script:MxTickErr = $_.Exception.Message }
+        })
+        $tk.Start()
+        $spin = 0
+        while (-not $script:MxTickRan -and -not $script:MxTickErr -and $spin -lt 40) {
+            [System.Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 25; $spin++
+        }
+        Write-MxCheck 'timer handler' ($script:MxTickRan -and -not $script:MxTickErr) `
+            "self-stopping tick via `$sender ran clean$(if ($script:MxTickErr) { " - $($script:MxTickErr)" })"
+    }
+    catch { Write-MxCheck 'timer handler' $false $_.Exception.Message }
+
     # The remote-setup push must refuse a LOCAL target - it should never create
     # an admin account on your own machine by mistake.
     try {
@@ -1369,6 +1393,44 @@ function Invoke-MxSelfTestPhase1 {
     $cePerm = Resolve-MatriseRunPermission -Entry $ce -Policy $script:MxPolicy -TargetName $script:MxTarget.Name
     Write-MxCheck 'custom command' (($ce.Id -eq 'custom.run') -and ($ce.Impact -eq 'fix') -and ($null -ne $cePerm)) `
         "builds a $($ce.Impact)-impact entry, policy says '$($cePerm.Action)'"
+
+    # Devices data layer, all offline. Two things that actually broke here:
+    #  - the port-name map indexed by an int (an [ordered] dict does positional
+    #    access instead of key lookup, so names came back blank); and
+    #  - the known-device round-trip that decides NEW vs named. If Join stops
+    #    flagging an un-named MAC, a stranger on the network stops standing out.
+    try {
+        $portOk = ($script:MatrisePortNames[443] -eq 'web (secure)') -and
+                  ($script:MatrisePortNames[22]  -eq 'SSH')
+        $macOk  = ((ConvertTo-MatriseMac 'f0ef8627 38 39') -eq 'F0-EF-86-27-38-39')
+
+        $dtmp = Join-Path ([System.IO.Path]::GetTempPath()) ("mx-dev-{0}" -f ([guid]::NewGuid().ToString('N').Substring(0,6)))
+        New-Item -ItemType Directory -Path $dtmp -Force | Out-Null
+        $scan = @(
+            [pscustomobject]@{ IP='192.168.9.1';  MAC='AA-BB-CC-00-00-01'; Vendor='ASUS';  DnsName='router'; Note='gateway/router' }
+            [pscustomobject]@{ IP='192.168.9.55'; MAC='AA-BB-CC-00-00-02'; Vendor='';       DnsName='';       Note='' }
+        )
+        # Nothing named yet: both devices come back NEW (Known = $false).
+        $j0 = @(Join-MatriseDevices -WorkDir $dtmp -Scan $scan)
+        $newBefore = @($j0 | Where-Object { -not $_.Known }).Count
+
+        # Name the first one; it must now read back as known, with that name.
+        [void](Set-MatriseDeviceLabel -WorkDir $dtmp -Mac 'AA-BB-CC-00-00-01' -Name 'Home Router' -Owner 'hall')
+        $j1 = @(Join-MatriseDevices -WorkDir $dtmp -Scan $scan)
+        $named   = $j1 | Where-Object { $_.MAC -eq 'AA-BB-CC-00-00-01' }
+        $strange = $j1 | Where-Object { $_.MAC -eq 'AA-BB-CC-00-00-02' }
+        $labelOk = ($named.Known) -and ($named.Name -eq 'Home Router') -and (-not $strange.Known)
+
+        # Forgetting it puts it back to NEW - the flag is a deliberate state.
+        [void](Remove-MatriseDeviceLabel -WorkDir $dtmp -Mac 'AA-BB-CC-00-00-01')
+        $j2 = @(Join-MatriseDevices -WorkDir $dtmp -Scan $scan)
+        $forgotOk = -not (($j2 | Where-Object { $_.MAC -eq 'AA-BB-CC-00-00-01' }).Known)
+
+        Remove-Item $dtmp -Recurse -Force -ErrorAction SilentlyContinue
+        Write-MxCheck 'devices' ($portOk -and $macOk -and ($newBefore -eq 2) -and $labelOk -and $forgotOk) `
+            "port names by int ($portOk), naming makes a device known and un-naming makes it NEW again"
+    }
+    catch { Write-MxCheck 'devices' $false $_.Exception.Message }
 
     # Bind the exact New-LocalUser call the Host button and the generated
     # script both make. -WhatIf still runs parameter validation, so this catches
@@ -1883,6 +1945,16 @@ function Show-MatriseWindow {
     $btnCustom = New-MxButton -Text 'Run command...' -Width 118 -Tip (Get-MatriseTip 'ui.custom') -OnClick {
         Show-MxCustomCommand
     }
+    $btnNetScan = New-MxButton -Text 'Scan network' -Width 108 -Tip (Get-MatriseTip 'net.scan') -OnClick {
+        $e = (Get-MatriseCatalog) | Where-Object { $_.Id -eq 'net.scan' } | Select-Object -First 1
+        if ($e) {
+            # Also select it in the tree, so the header shows what is running.
+            foreach ($g in $script:MxTree.Nodes) { foreach ($sec in $g.Nodes) { foreach ($n in $sec.Nodes) {
+                if ($n.Tag.Entry.Id -eq 'net.scan') { $script:MxTree.SelectedNode = $n }
+            } } }
+            Start-MxEntry -Entry $e
+        }
+    }
     $btnAgent = New-MxButton -Text 'Ask Claude' -Width 98 -Tip (Get-MatriseTip 'ui.agent') -OnClick { Invoke-MxAgent }
 
     $btnChunk = New-MxButton -Text 'Copy next part' -Width 116 -Tip (Get-MatriseTip 'ui.chunk') -OnClick { Copy-MxNextChunk }
@@ -1902,7 +1974,7 @@ function Show-MatriseWindow {
     Register-MxHover -Control $autoScan -Text (Get-MatriseTip 'ui.autoscan')
     $script:MxAutoScan = $autoScan
 
-    $bar.Controls.AddRange(@($btnRun, $btnCmd, $btnCustom, $btnStop, $sep1,
+    $bar.Controls.AddRange(@($btnRun, $btnCmd, $btnCustom, $btnNetScan, $btnStop, $sep1,
                              $btnCopy, $btnPaste, $btnLoad, $btnSave, $btnClear, $sep2,
                              $btnScan, $btnAgent, $btnChunk, $autoCopy, $autoScan))
 
@@ -2045,6 +2117,9 @@ function Show-MatriseWindow {
     Add-MxTButton 'Host me' 82 (Get-MatriseTip 'ui.host') {
         Write-MxTiming 'Host window opened'
         Show-MxHostWindow
+    } | Out-Null
+    Add-MxTButton 'Devices' 84 (Get-MatriseTip 'ui.devices') {
+        Show-MxDevicesWindow
     } | Out-Null
     Add-MxTButton 'Home setup' 100 (Get-MatriseTip 'ui.homesetup') {
         Write-MxTiming 'Home setup button pressed'
