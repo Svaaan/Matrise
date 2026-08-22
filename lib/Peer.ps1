@@ -1,28 +1,11 @@
-# Matrise - Home network pairing and peer messages
+# Matrise - Home pairing and peer messages for the workgroup case (no domain,
+# no Kerberos, no AD group granting rights).
 #
-# The corporate path assumes a domain: Kerberos, GPO-enabled WinRM, an AD group
-# that already grants you rights on the endpoint. None of that exists between
-# two PCs in a house, so this file covers the workgroup case.
-#
-# What has to be true before one home PC can help another:
-#
-#   on the machine being helped   WinRM enabled, network profile set to Private
-#   on the machine helping        the other PC listed in TrustedHosts
-#   both                          an account name and password on the far end
-#
-# The first two need an elevated command on each machine. That is not a hurdle
-# to work around - it is the reason this cannot happen to someone without them
-# taking part. The person being helped runs the setup on their own PC, so they
-# know it happened and can undo it with one command.
-#
-# ---------------------------------------------------------------------------
-# MESSAGES ARE ALWAYS ATTRIBUTED
-#
-# Every message carries the sender's username and machine name, and the popup
-# shows them. There is deliberately no way to send an anonymous or spoofed
-# message: a tool that can put arbitrary unattributed text on someone else's
-# screen is a phishing tool, and this is not one.
-# ---------------------------------------------------------------------------
+# Before one home PC can help another: the helped PC enables WinRM and marks its
+# network Private (an elevated step it runs itself, so it is consenting); the
+# helping PC lists it in TrustedHosts. Every peer message carries the sender's
+# name and machine and the popup shows them - there is deliberately no way to
+# send an anonymous or spoofed message.
 
 function Get-MatriseInboxPath {
     # ProgramData when we can write there, so any account on the machine can be

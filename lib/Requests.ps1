@@ -1,39 +1,17 @@
-# Matrise - Access requests, approvals and the conversation attached to them
+# Matrise - Access requests, approvals, and the conversation on each one.
 #
-# When policy blocks a command and the operator genuinely needs it, they raise
-# a request. Security approves it for a bounded window, or declines, and the
-# two of them talk it through on the request itself.
+# Blocked command + genuine need -> raise a request; Security approves it for a
+# bounded window or declines, and the two talk it through on the request itself.
 #
-# ---------------------------------------------------------------------------
-# WHY A FILE SHARE AND NOT A SERVICE
+# Two share directories with different ACLs do the enforcing:
+#   requests\  Support: create + comment   Security: full control
+#   grants\    Support: READ ONLY          Security: full control
+# The ACL on grants is the real control - an operator cannot write their own
+# grant because the file system refuses, not because this script declines.
 #
-# Two directories on an SMB share, with different ACLs:
-#
-#   \\share\matrise\requests\   IT Support: create + append comments
-#                              Security   : full control
-#   \\share\matrise\grants\     IT Support: READ ONLY
-#                              Security   : full control
-#
-# The ACL on the grants folder is the actual control. An operator cannot write
-# a grant for themselves because the file system will not let them - not
-# because this script declines to. That is a real boundary, enforced by
-# Windows, auditable through file system auditing, and it needs no server, no
-# listening port and no application-control exception.
-#
-# WHY NOT PEER-TO-PEER CHAT
-#
-# It was asked for, and I would advise against it. A direct socket between two
-# workstations means a listener on an endpoint, a firewall exception, a new
-# authentication scheme to get wrong, and a conversation nobody can audit -
-# for a capability Teams already provides. What is genuinely missing is not
-# chat; it is chat ATTACHED TO THE REQUEST, so the reasoning lives next to the
-# decision forever. That is what the comment thread below is. It costs one
-# JSON file and inherits the share's ACLs and auditing.
-# ---------------------------------------------------------------------------
+# Chat is attached to the request (one JSON file) rather than a peer-to-peer
+# socket: the reasoning lives next to the decision, and it inherits the ACLs.
 
-# Approvals only mean something where a Security team publishes a policy. On
-# a home machine there is nobody to ask, so say that instead of sending someone
-# hunting for a corporate share that was never meant to exist.
 function Get-MatriseNoStoreMessage {
     param($Policy)
     if (-not $Policy -or -not $Policy.IsManaged) {

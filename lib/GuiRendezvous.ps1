@@ -218,6 +218,7 @@ function Show-MxApproveDialog {
 function Show-MxGuestWindow {
 
     $d = New-Object System.Windows.Forms.Form
+    $script:MxRvGuestForm = $d
     $d.Text = 'Matrise - find a PC to help'
     $d.StartPosition = 'CenterParent'
     $d.ClientSize = New-Object System.Drawing.Size(720, 500)
@@ -364,14 +365,23 @@ function Show-MxGuestWindow {
                     $script:MxTarget = New-MatriseTarget -Name ([string]$m.h) -Credential $cred
                     Update-MxTargetLabel
 
-                    Add-MxBoardLine ''
-                    Add-MxBoardLine "*** Connected to $($m.h). ***"
-                    Update-MxBoardFlush
-
                     & $say ''
-                    & $say 'Done. Close this window, press Test connection, then pick'
-                    & $say 'any command on the left and press Run - it runs on their PC.'
+                    & $say 'Approved. Checking the connection and closing this window...'
                     $codeLbl.Text = 'Approved'
+
+                    # No "now press Test connection" step - just do it. The
+                    # window closes itself and the connection banner appears on
+                    # the board, so the next thing the user sees is "pick a
+                    # command and Run".
+                    $S.Drain.Stop()
+                    $done = New-Object System.Windows.Forms.Timer
+                    $done.Interval = 900
+                    $done.Add_Tick({
+                        $done.Stop(); $done.Dispose()
+                        $script:MxRvGuestForm.Close()
+                        Invoke-MxTestTarget
+                    })
+                    $done.Start()
                 }
                 elseif ($m.t -eq 'deny') {
                     & $say ''

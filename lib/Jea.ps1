@@ -1,30 +1,15 @@
-# Matrise - JEA generation
+# Matrise - JEA generation. Turns catalog + policy into a constrained endpoint
+# so the allow-list is enforced by the machine, not merely advised by the app.
 #
-# Turns the catalog plus the policy file into a Just Enough Administration
-# endpoint, so the allow list stops being advisory and becomes something the
-# endpoint enforces.
+#   - RestrictedRemoteServer + NoLanguage: only the generated functions are
+#     callable; there is no command line to type anything else into
+#   - RunAsVirtualAccount: commands run as a per-session temp admin, so the
+#     operator needs no standing admin rights on any endpoint
+#   - the endpoint transcribes every session itself
 #
-# What this buys, concretely:
-#
-#   * The operator connects to a RestrictedRemoteServer session. The language
-#     mode is NoLanguage. They cannot type an arbitrary command, because there
-#     is no command line to type it into - only the functions generated here.
-#   * Commands run under RunAsVirtualAccount, a temporary local administrator
-#     on the endpoint. The operator's own account therefore does not need to be
-#     a local admin anywhere. That single change removes the standing privilege
-#     that most endpoint-support models leak.
-#   * Every session is transcribed to disk by the endpoint itself, not by us.
-#
-# Two role capability files are produced:
-#
-#   MatriseSupport          the 'allow' commands - day to day
-#   MatriseSupportElevated  allow + requireApproval - the hard nuts
-#
-# Time-boxed elevation is done the way AD already does it: the elevated role is
-# mapped to a group whose membership is temporary (AD PAM shadow groups, or
-# Entra PIM). Matrise's own grant file drives what the console offers and keeps
-# the paper trail; the group membership is what the endpoint actually honours.
-# Do not let anyone tell you the client-side grant is the control.
+# Two roles: MatriseSupport (allow) and MatriseSupportElevated (allow +
+# requireApproval). Map the elevated role to a time-boxed group (AD PAM / Entra
+# PIM) - that, not the client-side grant, is what makes approval expire.
 
 function ConvertTo-MatriseFunctionName {
     param([string]$Id)

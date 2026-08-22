@@ -465,6 +465,14 @@ function Get-MatriseExplainTable {
         'Offers this PC up to be helped. It becomes visible to the other machine, and when they ask, you get a box showing who it is and a number to check.' `
         'Nothing is shared until you press Approve. Closing the window stops it immediately.'
 
+    & $e 'ui.seescreen' `
+        'Opens Windows Quick Assist so you can watch their screen live and, if they let you, control it. Matrise does not do the screen sharing itself - Quick Assist is Microsoft''s own tool and does it properly.' `
+        'You get a code to read out to them; they type it in and choose to share. If you are already connected, Matrise also pops a message on their screen telling them what to do.'
+
+    & $e 'ui.custom' `
+        'Type any command yourself instead of picking one from the list, and run it on whichever machine you are pointed at.' `
+        'Handy for a one-off you do not have a button for. It still goes through the same safety check and audit as the built-in commands.'
+
     & $e 'ui.findbar' `
         'The search bar for the board.' `
         'Ctrl+F brings you here from anywhere in the window.'

@@ -1,28 +1,11 @@
-# Matrise - Policy, grants and audit
+# Matrise - Policy, grants and audit.
 #
-# ---------------------------------------------------------------------------
-# READ THIS BEFORE TRUSTING IT
-#
-# What is in this file is GOVERNANCE, not a security boundary.
-#
-# Matrise is PowerShell. Anyone who can run it can read it, edit the policy
-# file, or skip Matrise entirely and type the command into a console. A block
-# list evaluated inside the client stops an honest operator from doing the
-# wrong thing by accident. It does not stop a determined one, and it must never
-# be presented to a Security team as though it does.
-#
-# The enforcement boundary is the ENDPOINT, and in an AD environment that means
-# JEA - a constrained PowerShell Remoting endpoint that exposes only the
-# commands Security has approved, runs them under a virtual account, and logs
-# every one. The operator's own account never needs admin rights at all.
-#
-# Jea.ps1 generates that endpoint configuration from this same policy file, so
-# the list the operator sees and the list the machine actually enforces are
-# built from one source and cannot drift apart.
-#
-# So: this file makes the rules visible, reviewable and auditable. JEA makes
-# them true. Ship both.
-# ---------------------------------------------------------------------------
+# This is GOVERNANCE, not a security boundary. Matrise is PowerShell: anyone who
+# can run it can edit the policy or skip Matrise entirely. A client-side block
+# list stops an honest operator from a mistake and produces an audit trail; it
+# does not stop a determined one, and must never be sold to Security as if it
+# did. The real boundary is the endpoint - see Jea.ps1, generated from this same
+# file so the list shown and the list enforced cannot drift apart.
 
 $script:MatrisePolicy = $null
 

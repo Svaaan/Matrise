@@ -47,6 +47,7 @@ $env:MATRISE_HOME = $root
 . (Join-Path $root 'lib\Peer.ps1')
 . (Join-Path $root 'lib\Handshake.ps1')
 . (Join-Path $root 'lib\Rendezvous.ps1')
+. (Join-Path $root 'lib\ScreenShare.ps1')
 . (Join-Path $root 'lib\Policy.ps1')
 . (Join-Path $root 'lib\Requests.ps1')
 . (Join-Path $root 'lib\Jea.ps1')
@@ -249,6 +250,7 @@ try {
     . (Join-Path $root 'lib\Gui.ps1')
     . (Join-Path $root 'lib\GuiRequests.ps1')
     . (Join-Path $root 'lib\GuiRendezvous.ps1')
+    . (Join-Path $root 'lib\GuiCustom.ps1')
     Clear-MatriseConsoleScripts -WorkDir $root
     $t = $(if ($Target) { New-MatriseTarget -Name $Target } else { New-MatriseTarget })
     if ($SelfTest) { Show-MatriseWindow -WorkDir $root -SelfTestMs 1200 -Policy $policy -Target $t }

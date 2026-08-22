@@ -421,6 +421,35 @@ endpoint · `-Requests` lists the queue · `-Approve <id> -Minutes 60` and
 
 ---
 
+## Running a command that is not in the list
+
+**Run command...** on the toolbar opens a box: type any cmd or PowerShell,
+choose which, and it runs on whichever machine you are pointed at - your own,
+or the one you are connected to. It is built into a normal entry and goes
+through the same policy check, audit line and confirmation as the built-in
+commands, so a typed command is not a way around any of them.
+
+---
+## Screen sharing
+
+Yes, but through **Windows Quick Assist**, not by Matrise capturing the screen.
+
+Code that grabs another PC's screen and streams the pixels is byte-for-byte a
+remote-access trojan, and Windows Defender blocks it as malicious *before it
+runs* - it was blocked twice during development, locally and remotely. Shipping
+it would force users to exclude Matrise from antivirus, the exact behaviour this
+tool's own analyzer flags as a red flag.
+
+So **See screen** hands off to Quick Assist: built into Windows 11,
+Microsoft-signed, with its own consent handshake, doing real-time screen sharing
+and remote control properly. Matrise opens it, prints the steps on the board,
+and - if you are connected - pops a message on the other PC's screen telling
+them what to do. Nothing is shared until they enter your code and agree.
+
+Windows 11 Home cannot receive RDP, so Quick Assist is the right tool for home
+machines regardless.
+
+---
 ## Safety
 
 - Read-only commands run without ceremony. Anything that changes the system shows

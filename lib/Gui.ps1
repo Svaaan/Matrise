@@ -836,6 +836,38 @@ function Write-MxTiming {
     } catch { }
 }
 
+function Invoke-MxScreenShare {
+    $tname = $(if ($script:MxTarget.Mode -eq 'remote') { $script:MxTarget.Name } else { '' })
+
+    try { [void](Start-MatriseQuickAssist) }
+    catch {
+        [void][System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Matrise - Quick Assist', 'OK', 'Warning')
+        return
+    }
+
+    foreach ($l in ((Get-MatriseScreenShareBrief -TargetName $tname) -split "`r?`n")) { Add-MxBoardLine $l }
+    Update-MxBoardFlush
+
+    # If there is a live connection, tell the far PC on their own screen - over
+    # the channel we already have - so they are not left guessing.
+    if ($script:MxTarget.Mode -eq 'remote') {
+        $work = {
+            param($queue, $state, $libDir, $target, $alert)
+            try {
+                . (Join-Path $libDir 'Runner.ps1'); . (Join-Path $libDir 'Target.ps1'); . (Join-Path $libDir 'Peer.ps1')
+                $how = Send-MatriseScreenAlert -Target $target -Text $alert
+                $queue.Enqueue("    (told $($target.Name) on their screen - via $how)")
+            }
+            catch { $queue.Enqueue("    (could not put a message on their screen: $($_.Exception.Message))") }
+            finally { $state['Done'] = $true }
+        }
+        [void](Start-MxBackground -Work $work -Label "prompting $tname" -TimeoutSec 40 `
+            -Arguments @((Join-Path $script:MxWorkDir 'lib'), $script:MxTarget, (Get-MatriseScreenShareAlert)))
+    }
+
+    $script:MxStatus.Text = 'Quick Assist opened - share the code with them'
+}
+
 function Update-MxTargetLabel {
     if (-not $script:MxTargetLabel) { return }
     $t = $script:MxTarget
@@ -1272,6 +1304,13 @@ function Invoke-MxSelfTestPhase1 {
     catch {
         Write-MxCheck 'handshake script' $false $_.Exception.Message
     }
+
+    # A typed command must build into a real entry that Start-MxEntry accepts,
+    # and it must be policy-gated like any other - not a way around the rules.
+    $ce = New-MxCustomEntry -Shell 'ps' -Command 'Get-Date'
+    $cePerm = Resolve-MatriseRunPermission -Entry $ce -Policy $script:MxPolicy -TargetName $script:MxTarget.Name
+    Write-MxCheck 'custom command' (($ce.Id -eq 'custom.run') -and ($ce.Impact -eq 'fix') -and ($null -ne $cePerm)) `
+        "builds a $($ce.Impact)-impact entry, policy says '$($cePerm.Action)'"
 
     # Bind the exact New-LocalUser call the Host button and the generated
     # script both make. -WhatIf still runs parameter validation, so this catches
@@ -1783,6 +1822,9 @@ function Show-MatriseWindow {
     $sep2.TextAlign = 'MiddleCenter'
 
     $btnScan  = New-MxButton -Text 'Analyze' -Width 78 -Tip (Get-MatriseTip 'ui.analyze') -OnClick { Invoke-MxAnalyze }
+    $btnCustom = New-MxButton -Text 'Run command...' -Width 118 -Tip (Get-MatriseTip 'ui.custom') -OnClick {
+        Show-MxCustomCommand
+    }
     $btnAgent = New-MxButton -Text 'Ask Claude' -Width 98 -Tip (Get-MatriseTip 'ui.agent') -OnClick { Invoke-MxAgent }
 
     $btnChunk = New-MxButton -Text 'Copy next part' -Width 116 -Tip (Get-MatriseTip 'ui.chunk') -OnClick { Copy-MxNextChunk }
@@ -1802,7 +1844,7 @@ function Show-MatriseWindow {
     Register-MxHover -Control $autoScan -Text (Get-MatriseTip 'ui.autoscan')
     $script:MxAutoScan = $autoScan
 
-    $bar.Controls.AddRange(@($btnRun, $btnCmd, $btnStop, $sep1,
+    $bar.Controls.AddRange(@($btnRun, $btnCmd, $btnCustom, $btnStop, $sep1,
                              $btnCopy, $btnPaste, $btnLoad, $btnSave, $btnClear, $sep2,
                              $btnScan, $btnAgent, $btnChunk, $autoCopy, $autoScan))
 
@@ -1922,6 +1964,12 @@ function Show-MatriseWindow {
     }
     $btnHost.Location = New-Object System.Drawing.Point(794, 5)
     $tbar.Controls.Add($btnHost)
+
+    $btnScreen = New-MxButton -Text 'See screen' -Width 96 -Tip (Get-MatriseTip 'ui.seescreen') -OnClick {
+        Invoke-MxScreenShare
+    }
+    $btnScreen.Location = New-Object System.Drawing.Point(880, 5)
+    $tbar.Controls.Add($btnScreen)
 
     $btnMsg = New-MxButton -Text 'Send message' -Width 118 -Tip (Get-MatriseTip 'ui.sendmsg') -OnClick {
         Invoke-MxSendMessage

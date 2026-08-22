@@ -1,29 +1,11 @@
-# Matrise - One-code pairing
+# Matrise - One-code pairing (fallback for when the Guest/Host buttons are not
+# usable). They run one script, it prints one code, you paste it; Matrise fills
+# in the machine, trusts it, and stores the credential.
 #
-# The manual route works, but it asks a parent to copy a computer name, add it
-# to a trusted list, and then type "HERPC\name" plus a password into a Windows
-# dialog. Every one of those is a place to get it wrong, and the error you get
-# back ("Access is denied") does not tell you which one you got wrong.
-#
-# This replaces all of it with: they run one script, it prints one code, you
-# paste that code. Matrise fills in the machine, trusts it, and stores the
-# credential.
-#
-# ---------------------------------------------------------------------------
-# WHAT CANNOT BE AUTOMATED, AND WHY
-#
-# Something must be run once, by them, as Administrator, on their machine.
-# Windows will not let a remote computer switch on its own remote management -
-# if it did, that would be the vulnerability. That step is the consent, and it
-# is deliberately not something you can do to someone from a distance.
-#
-# WHAT THE CODE CONTAINS
-#
-# The code is a password. It carries the account name and password of a helper
-# account created on their PC. Base64 is not encryption - anyone who reads the
-# code can use it. Send it the same way you would send a password, and delete
-# the message afterwards.
-# ---------------------------------------------------------------------------
+# Something must run once, as Administrator, on their machine - Windows will not
+# let a remote PC enable its own remote management, and that step IS the consent.
+# The code is a password (Base64 is not encryption): send it privately, delete
+# it after.
 
 $script:MatriseHelperAccount = 'MatriseHelp'
 

@@ -1,41 +1,14 @@
-# Matrise - Guest / Host rendezvous
+# Matrise - Guest / Host rendezvous over UDP.
 #
-# Replaces "run this script, copy this code, paste it back" with:
-#
-#   On the PC that needs help :  press HOST
-#   On the PC that helps      :  press GUEST, pick them from the list
-#   On the PC that needs help :  an approval box appears - press Approve
-#
-# Nothing is typed and nothing is pasted.
-#
-# ---------------------------------------------------------------------------
-# THE PROBLEM THIS SOLVES
-#
-# Before the two machines trust each other there is no channel between them:
-# WinRM will not talk without credentials, and the credentials are the thing we
-# are trying to deliver. So we need one narrow channel that works with no trust
-# at all, and that is a UDP datagram on the local network.
-#
-# UDP on a LAN is unauthenticated and anyone on the network can read it, so the
-# protocol is built assuming exactly that:
-#
-#   * The beacon carries no secret. Only "a PC called X is offering to be
-#     helped". Broadcasting that is no worse than a machine name in Explorer.
-#
-#   * The password is never sent in the clear. The guest generates a throwaway
-#     RSA key, sends the public half, and the host encrypts the password to it.
-#     Someone sniffing the network captures ciphertext they cannot open.
-#
-#   * A human on the host approves, and sees who is asking. Approval is not a
-#     formality - without it nothing is ever sent.
-#
-#   * Both screens show the same six-digit number, derived from the guest's key
-#     and a nonce. If someone else on the network raced in with their own
-#     request, the numbers would not match. Read it aloud before approving.
-#
-# The keypair is thrown away after one exchange, so a captured session cannot
-# be replayed or decrypted later.
-# ---------------------------------------------------------------------------
+# Before two PCs trust each other there is no channel: WinRM needs credentials,
+# and credentials are what we are delivering. So pairing rides one UDP datagram
+# on the LAN, built assuming anyone can read it:
+#   - the beacon carries no secret, just "PC X offers to be helped"
+#   - the password is RSA-OAEP encrypted to a throwaway key the guest sends;
+#     a sniffer gets ciphertext, and the key is discarded after one exchange
+#   - the host's owner approves and sees who is asking
+#   - both screens show the same six-digit code (hash of key + nonce); mismatch
+#     means someone else raced in. Read it aloud before approving.
 
 $script:MxRvGuestPort = 51999   # guest listens here: beacons and replies
 $script:MxRvHostPort  = 51998   # host listens here: connection requests
