@@ -369,7 +369,8 @@ function Show-MxGuestWindow {
                     Update-MxBoardFlush
 
                     & $say ''
-                    & $say 'Done. Close this and press Test connection.'
+                    & $say 'Done. Close this window, press Test connection, then pick'
+                    & $say 'any command on the left and press Run - it runs on their PC.'
                     $codeLbl.Text = 'Approved'
                 }
                 elseif ($m.t -eq 'deny') {

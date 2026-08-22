@@ -438,10 +438,20 @@ function Start-MxEntry {
 
     if (-not (Test-MxConfirm -Entry $resolved)) { $script:MxStatus.Text = 'cancelled'; return }
 
-    if ($resolved.Admin -and -not $script:MxElevated) {
-        Add-MxBoardLine ''
-        Add-MxBoardLine '!!! This command needs Administrator to return complete data.'
-        Add-MxBoardLine '!!! Running anyway - expect blank sections or access-denied lines.'
+    # Whether Administrator is needed depends on the machine the command runs
+    # ON, not the one you are sitting at. Warning about this PC's elevation
+    # while pointed at another is just noise.
+    if ($resolved.Admin) {
+        if ($script:MxTarget.Mode -eq 'remote') {
+            $who = $(if ($script:MxTarget.Credential) { $script:MxTarget.Credential.UserName } else { 'your account' })
+            Add-MxBoardLine ''
+            Add-MxBoardLine "    (needs Administrator on $($script:MxTarget.Name) - running as $who)"
+        }
+        elseif (-not $script:MxElevated) {
+            Add-MxBoardLine ''
+            Add-MxBoardLine '!!! This command needs Administrator to return complete data.'
+            Add-MxBoardLine '!!! Running anyway - expect blank sections or access-denied lines.'
+        }
     }
 
     $script:MxEntry = $resolved
@@ -837,8 +847,12 @@ function Update-MxTargetLabel {
         $script:MxTargetLabel.ForeColor = $(if ($t.Status -eq 'ok') { $script:MxAccent } else { $script:MxFix })
     }
     if ($script:MxForm) {
-        $script:MxForm.Text = "Matrise - $(Get-MatriseTargetLabel -Target $t)" +
-            $(if ($script:MxElevated) { '  [Administrator]' } else { '  [limited - not elevated]' })
+        if ($t.Mode -eq 'remote') {
+            $script:MxForm.Text = "Matrise - CONTROLLING $($t.Name)   (everything you run goes there)"
+        } else {
+            $script:MxForm.Text = "Matrise - $env:COMPUTERNAME (this PC)" +
+                $(if ($script:MxElevated) { '  [Administrator]' } else { '  [limited - not elevated]' })
+        }
     }
 }
 
@@ -996,6 +1010,22 @@ function Invoke-MxTestTarget {
         -OnDone {
             Update-MxTargetLabel
             $script:MxStatus.Text = "connection check: $($script:MxTarget.Status)"
+
+            if ($script:MxTarget.Mode -eq 'remote' -and $script:MxTarget.Status -eq 'ok') {
+                Add-MxBoardLine ''
+                Add-MxBoardLine '================================================================'
+                Add-MxBoardLine "  YOU ARE NOW CONTROLLING $($script:MxTarget.Name)"
+                Add-MxBoardLine '================================================================'
+                Add-MxBoardLine '  Pick any command in the list on the left and press Run.'
+                Add-MxBoardLine '  It runs on THAT machine and the output appears here.'
+                Add-MxBoardLine ''
+                Add-MxBoardLine '  Start with:  Security > Hunt > FULL SWEEP'
+                Add-MxBoardLine '  or:          Computer > Diagnose > System summary'
+                Add-MxBoardLine ''
+                Add-MxBoardLine '  Press "This PC" in the bar above to point back at your own machine.'
+                Add-MxBoardLine ''
+                Update-MxBoardFlush
+            }
         })
 }
 
