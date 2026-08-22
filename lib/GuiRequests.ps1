@@ -186,15 +186,14 @@ function Show-MxHomeSetup {
     $s1d.SetBounds(16, 118, 748, 62)
     $d.Controls.Add($s1d)
 
+    # The script is NOT written here. Writing a file that creates an admin
+    # account and enables remoting is exactly the shape real-time antivirus
+    # inspects hardest, and that inspection happens inside the write call - so
+    # doing it before the window exists means the app sits there looking dead.
+    # It happens in Add_Shown instead, with the window visible and a status line.
     $script:MxPairFile = Join-Path $script:MxWorkDir 'Enable-MatriseHelp.ps1'
-    [void](New-MatriseHandshakeScript -HelperPc $env:COMPUTERNAME -HelperUser $env:USERNAME -OutFile $script:MxPairFile)
 
-    Add-MxBoardLine ''
-    Add-MxBoardLine '*** Home setup opened. ***'
-    Add-MxBoardLine "    Script for the other PC: $script:MxPairFile"
-    Update-MxBoardFlush
-
-    $pathBox = New-MxDlgText -X 16 -Y 186 -W 520 -H 26 -Text $script:MxPairFile -ReadOnly $true
+    $pathBox = New-MxDlgText -X 16 -Y 186 -W 520 -H 26 -ReadOnly $true -Text 'preparing...'
     $d.Controls.Add($pathBox)
 
     $btnCopyScript = New-MxDlgButton -Text 'Copy the script' -W 140
@@ -305,11 +304,9 @@ function Show-MxHomeSetup {
     $btnTrust.SetBounds(304, 604, 130, 30)
     $d.Controls.Add($btnTrust)
 
-    $trusted = Get-MatriseTrustedHosts
-    $trustNow = New-MxDlgText -X 444 -Y 604 -W 320 -H 30 -ReadOnly $true -Text $(
-        if ($null -eq $trusted) { 'Remote management not running yet' }
-        elseif ($trusted)       { "Trusted: $trusted" }
-        else                    { 'Trusted: (none)' })
+    # Also deferred - reading this asks the WinRM service, which is not
+    # something to do before the window is drawn.
+    $trustNow = New-MxDlgText -X 444 -Y 604 -W 320 -H 30 -ReadOnly $true -Text 'checking...'
     $d.Controls.Add($trustNow)
 
     $btnTrust.Add_Click({
@@ -330,8 +327,47 @@ function Show-MxHomeSetup {
     $d.Controls.Add($ok)
     $d.CancelButton = $ok
 
-    $d.Add_Shown({ Hide-MxPop; Show-MxDialogFront -Dialog $d })
+    $d.Add_Shown({
+        Hide-MxPop
+        Show-MxDialogFront -Dialog $d
+        Write-MxTiming 'home setup: window shown'
+
+        # --- now the slow parts, with the window already up ----------------
+        $d.Refresh()
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        try {
+            [void](New-MatriseHandshakeScript -HelperPc $env:COMPUTERNAME -HelperUser $env:USERNAME `
+                        -OutFile $script:MxPairFile)
+            $pathBox.Text = $script:MxPairFile
+        }
+        catch {
+            $pathBox.Text = "could not write the script: $($_.Exception.Message)"
+        }
+        $sw.Stop()
+        Write-MxTiming 'home setup: script written' $sw.ElapsedMilliseconds
+        if ($sw.ElapsedMilliseconds -gt 3000) {
+            $pathBox.Text = "$script:MxPairFile   (took $([math]::Round($sw.ElapsedMilliseconds/1000,1))s - antivirus was inspecting it)"
+        }
+
+        $d.Refresh()
+        $sw2 = [System.Diagnostics.Stopwatch]::StartNew()
+        $trusted = Get-MatriseTrustedHosts
+        $sw2.Stop()
+        Write-MxTiming 'home setup: trusted list read' $sw2.ElapsedMilliseconds
+        $trustNow.Text = $(
+            if ($null -eq $trusted) { 'Remote management not running yet' }
+            elseif ($trusted)       { "Trusted: $trusted" }
+            else                    { 'Trusted: (none)' })
+
+        Add-MxBoardLine ''
+        Add-MxBoardLine '*** Home setup opened. ***'
+        Add-MxBoardLine "    Script for the other PC: $script:MxPairFile"
+        Update-MxBoardFlush
+    })
+
+    Write-MxTiming 'home setup: opening dialog'
     [void]$d.ShowDialog($script:MxForm)
+    Write-MxTiming 'home setup: closed'
     $d.Dispose()
 }
 

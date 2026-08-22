@@ -812,6 +812,20 @@ function Register-MxUiErrorHandler {
     })
 }
 
+# Writes one line per UI milestone. When something takes a long time in a
+# window the user cannot interact with, this is the difference between knowing
+# and guessing.
+function Write-MxTiming {
+    param([string]$What, [int]$Ms = -1)
+    try {
+        $dir = Join-Path $script:MxWorkDir 'audit'
+        New-Item -ItemType Directory -Path $dir -Force -ErrorAction SilentlyContinue | Out-Null
+        $line = "{0}  {1}{2}" -f (Get-Date).ToString('HH:mm:ss.fff'), $What,
+                $(if ($Ms -ge 0) { "  (${Ms} ms)" } else { '' })
+        Add-Content -Path (Join-Path $dir 'ui-timing.log') -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue
+    } catch { }
+}
+
 function Update-MxTargetLabel {
     if (-not $script:MxTargetLabel) { return }
     $t = $script:MxTarget
@@ -1840,7 +1854,10 @@ function Show-MatriseWindow {
     $tbar.Controls.Add($tstat)
 
     $btnHome = New-MxButton -Text 'Home setup' -Width 104 -Tip (Get-MatriseTip 'ui.homesetup') -OnClick {
+        Write-MxTiming 'Home setup button pressed'
+        $script:MxStatus.Text = 'opening Home setup...'
         Show-MxHomeSetup -Target $script:MxTarget
+        $script:MxStatus.Text = 'ready'
     }
     $btnHome.Location = New-Object System.Drawing.Point(590, 5)
     $tbar.Controls.Add($btnHome)
