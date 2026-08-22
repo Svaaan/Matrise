@@ -34,6 +34,34 @@ a scripted pass and reports PASS/FAIL for each part.
 
 ---
 
+## Getting it and running it
+
+There is no `.exe` - Matrise is PowerShell, on purpose. An `.exe` would only
+trip antivirus and enterprise application-control, which is the opposite of what
+a security tool wants. You run it two ways:
+
+**The folder.** Clone or download the repo, run `Matrise.bat`. Everything lives
+in `lib\`. If it arrived as a zip or download, clear the untrusted mark first
+with `Matrise.ps1 -Unblock`.
+
+**One file.** Build a self-contained copy with
+
+```bash
+powershell -File Matrise.ps1 -Bundle
+```
+
+which inlines all 18 modules into `Matrise.bundle.ps1` - one file you can hand
+over, e-mail, or drop on a USB stick, with no `lib\` folder to keep alongside
+it. It prints the file's SHA-256 so whoever receives it can confirm it arrived
+unaltered, and verifies it parses before finishing. Rename it to `Matrise.ps1`
+and it behaves exactly like the folder version (the full 45-check self-test
+passes from the single file). The bundle is a build artifact and is gitignored.
+
+Either way there is nothing to install: no compiled binary, no service, no
+registry keys. It writes only `reports\`, `audit\` and `matrise-layout.json`
+next to itself.
+
+---
 ## How it works
 
 ### 1. Pick a command
@@ -429,25 +457,6 @@ or the one you are connected to. It is built into a normal entry and goes
 through the same policy check, audit line and confirmation as the built-in
 commands, so a typed command is not a way around any of them.
 
----
-## Screen sharing
-
-Yes, but through **Windows Quick Assist**, not by Matrise capturing the screen.
-
-Code that grabs another PC's screen and streams the pixels is byte-for-byte a
-remote-access trojan, and Windows Defender blocks it as malicious *before it
-runs* - it was blocked twice during development, locally and remotely. Shipping
-it would force users to exclude Matrise from antivirus, the exact behaviour this
-tool's own analyzer flags as a red flag.
-
-So **See screen** hands off to Quick Assist: built into Windows 11,
-Microsoft-signed, with its own consent handshake, doing real-time screen sharing
-and remote control properly. Matrise opens it, prints the steps on the board,
-and - if you are connected - pops a message on the other PC's screen telling
-them what to do. Nothing is shared until they enter your code and agree.
-
-Windows 11 Home cannot receive RDP, so Quick Assist is the right tool for home
-machines regardless.
 
 ---
 ## Tamper-evident audit log

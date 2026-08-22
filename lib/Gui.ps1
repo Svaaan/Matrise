@@ -872,11 +872,13 @@ function Update-MxTargetLabel {
     if (-not $script:MxTargetLabel) { return }
     $t = $script:MxTarget
     if ($t.Mode -eq 'local') {
-        $script:MxTargetLabel.Text = "running on this PC ($env:COMPUTERNAME)"
+        $script:MxTargetLabel.Text = "> this PC"
         $script:MxTargetLabel.ForeColor = $script:MxDim
     } else {
-        $script:MxTargetLabel.Text = "remote: $(Get-MatriseTargetLabel -Target $t)   [$($t.Status)]"
-        $script:MxTargetLabel.ForeColor = $(if ($t.Status -eq 'ok') { $script:MxAccent } else { $script:MxFix })
+        $dot = $(if ($t.Status -eq 'ok') { '* ' } else { '' })
+        $script:MxTargetLabel.Text = "$dot> $($t.Name)"
+        $script:MxTargetLabel.ForeColor = $(if ($t.Status -eq 'ok') {
+            [System.Drawing.Color]::FromArgb(124, 222, 146) } else { $script:MxFix })
     }
     if ($script:MxForm) {
         if ($t.Mode -eq 'remote') {
@@ -1895,41 +1897,83 @@ function Show-MatriseWindow {
                              $btnScan, $btnAgent, $btnChunk, $autoCopy, $autoScan))
 
     # ------------------------------------------------------------ target bar -
+    # Auto-flowing so buttons can never overlap, whatever gets added later.
+    # Three groups separated by dividers: choose a machine, connect to a peer,
+    # then peer actions. Requests is pinned to the right.
     $tbar = New-Object System.Windows.Forms.Panel
     $tbar.Dock = 'Top'
-    $tbar.Height = 38
+    $tbar.Height = 40
     $tbar.BackColor = [System.Drawing.Color]::FromArgb(28, 31, 38)
 
-    $tl = New-MxLabel -Text 'Machine' -Size 9 -Color $script:MxDim
-    $tl.SetBounds(10, 10, 60, 20)
-    $tbar.Controls.Add($tl)
+    $tright = New-Object System.Windows.Forms.Panel
+    $tright.Dock = 'Right'
+    $tright.Width = 108
+    $tright.BackColor = $tbar.BackColor
 
+    $btnReq = New-MxButton -Text 'Requests' -Width 92 -Tip (Get-MatriseTip 'ui.requests') -OnClick {
+        Show-MxRequestsWindow -Policy $script:MxPolicy
+    }
+    $btnReq.Location = New-Object System.Drawing.Point(6, 6)
+    $tright.Controls.Add($btnReq)
+
+    $tflow = New-Object System.Windows.Forms.FlowLayoutPanel
+    $tflow.Dock = 'Fill'
+    $tflow.WrapContents = $false
+    $tflow.AutoScroll = $true
+    $tflow.BackColor = $tbar.BackColor
+    $tflow.Padding = New-Object System.Windows.Forms.Padding(6, 6, 0, 0)
+
+    function Add-MxTSep {
+        $sep = New-Object System.Windows.Forms.Label
+        $sep.Text = ''; $sep.AutoSize = $false
+        $sep.Width = 1; $sep.Height = 24
+        $sep.BackColor = [System.Drawing.Color]::FromArgb(60, 66, 78)
+        $sep.Margin = New-Object System.Windows.Forms.Padding(8, 2, 8, 0)
+        $tflow.Controls.Add($sep)
+    }
+    function Add-MxTLabel {
+        param([string]$Text, $Color)
+        $l = New-Object System.Windows.Forms.Label
+        $l.Text = $Text; $l.AutoSize = $true
+        $l.ForeColor = $(if ($Color) { $Color } else { $script:MxDim })
+        $l.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+        $l.Margin = New-Object System.Windows.Forms.Padding(2, 8, 2, 0)
+        $tflow.Controls.Add($l)
+        $l
+    }
+    function Add-MxTButton {
+        param([string]$Text, [int]$Width, [string]$Tip, [scriptblock]$OnClick)
+        $btn = New-MxButton -Text $Text -Width $Width -Tip $Tip -OnClick $OnClick
+        $btn.Margin = New-Object System.Windows.Forms.Padding(0, 4, 4, 0)
+        $tflow.Controls.Add($btn)
+        $btn
+    }
+
+    # --- group 1: which machine ---
+    Add-MxTLabel 'Machine' | Out-Null
     $tbox = New-Object System.Windows.Forms.TextBox
-    $tbox.SetBounds(72, 6, 210, 24)
+    $tbox.Width = 180
+    $tbox.Margin = New-Object System.Windows.Forms.Padding(0, 6, 4, 0)
     $tbox.BackColor = $script:MxPanel; $tbox.ForeColor = $script:MxFg
     $tbox.BorderStyle = 'FixedSingle'
     $tbox.Font = New-Object System.Drawing.Font('Consolas', 10)
     $tbox.Text = $(if ($script:MxTarget.Mode -eq 'remote') { $script:MxTarget.Name } else { '' })
     $script:MxTargetBox = $tbox
     Register-MxHover -Control $tbox -Text (Get-MatriseTip 'ui.target')
-    $tbar.Controls.Add($tbox)
+    $tflow.Controls.Add($tbox)
 
-    $btnLocal = New-MxButton -Text 'This PC' -Width 78 -Tip (Get-MatriseTip 'ui.thispc') -OnClick {
+    Add-MxTButton 'This PC' 74 (Get-MatriseTip 'ui.thispc') {
         $script:MxTargetBox.Text = ''
         $script:MxTarget = New-MatriseTarget
         Update-MxTargetLabel
         $script:MxStatus.Text = 'target: this PC'
-    }
-    $btnLocal.Location = New-Object System.Drawing.Point(290, 5)
-    $tbar.Controls.Add($btnLocal)
+    } | Out-Null
 
-    $btnConnect = New-MxButton -Text 'Test connection' -Width 118 -Tip (Get-MatriseTip 'ui.testconn') -OnClick {
+    Add-MxTButton 'Test connection' 116 (Get-MatriseTip 'ui.testconn') {
         Invoke-MxTestTarget
-    }
-    $btnConnect.Location = New-Object System.Drawing.Point(372, 5)
-    $tbar.Controls.Add($btnConnect)
+    } | Out-Null
 
-    $btnCred = New-MxButton -Text 'Run as...' -Width 88 -Tip (Get-MatriseTip 'ui.runas') -OnClick {
+    Add-MxTButton 'Run as...' 84 (Get-MatriseTip 'ui.runas') {
         $machine = $script:MxTargetBox.Text.Trim()
         if (-not $machine) {
             [void][System.Windows.Forms.MessageBox]::Show(
@@ -1979,56 +2023,45 @@ function Show-MatriseWindow {
             Add-MxBoardLine "    Try $machine\$u instead if this connection is refused."
             Update-MxBoardFlush
         }
-    }
-    $btnCred.Location = New-Object System.Drawing.Point(494, 5)
-    $tbar.Controls.Add($btnCred)
+    } | Out-Null
 
-    $tstat = New-MxLabel -Text '' -Size 9 -Color $script:MxDim
-    $tstat.SetBounds(830, 10, 380, 20)
-    $script:MxTargetLabel = $tstat
-    $tbar.Controls.Add($tstat)
+    Add-MxTSep
 
-    $btnHome = New-MxButton -Text 'Home setup' -Width 104 -Tip (Get-MatriseTip 'ui.homesetup') -OnClick {
+    # --- group 2: connect to another PC ---
+    Add-MxTButton 'Find a PC' 90 (Get-MatriseTip 'ui.guest') {
+        Write-MxTiming 'Guest window opened'
+        Show-MxGuestWindow
+    } | Out-Null
+    Add-MxTButton 'Host me' 82 (Get-MatriseTip 'ui.host') {
+        Write-MxTiming 'Host window opened'
+        Show-MxHostWindow
+    } | Out-Null
+    Add-MxTButton 'Home setup' 100 (Get-MatriseTip 'ui.homesetup') {
         Write-MxTiming 'Home setup button pressed'
         $script:MxStatus.Text = 'opening Home setup...'
         Show-MxHomeSetup -Target $script:MxTarget
         $script:MxStatus.Text = 'ready'
-    }
-    $btnHome.Location = New-Object System.Drawing.Point(590, 5)
-    $tbar.Controls.Add($btnHome)
+    } | Out-Null
 
-    $btnGuest = New-MxButton -Text 'Find a PC' -Width 92 -Tip (Get-MatriseTip 'ui.guest') -OnClick {
-        Write-MxTiming 'Guest window opened'
-        Show-MxGuestWindow
-    }
-    $btnGuest.Location = New-Object System.Drawing.Point(698, 5)
-    $tbar.Controls.Add($btnGuest)
+    Add-MxTSep
 
-    $btnHost = New-MxButton -Text 'Host me' -Width 84 -Tip (Get-MatriseTip 'ui.host') -OnClick {
-        Write-MxTiming 'Host window opened'
-        Show-MxHostWindow
-    }
-    $btnHost.Location = New-Object System.Drawing.Point(794, 5)
-    $tbar.Controls.Add($btnHost)
-
-    $btnScreen = New-MxButton -Text 'See screen' -Width 96 -Tip (Get-MatriseTip 'ui.seescreen') -OnClick {
+    # --- group 3: things you do to the connected PC ---
+    Add-MxTButton 'See screen' 94 (Get-MatriseTip 'ui.seescreen') {
         Invoke-MxScreenShare
-    }
-    $btnScreen.Location = New-Object System.Drawing.Point(880, 5)
-    $tbar.Controls.Add($btnScreen)
-
-    $btnMsg = New-MxButton -Text 'Send message' -Width 118 -Tip (Get-MatriseTip 'ui.sendmsg') -OnClick {
+    } | Out-Null
+    Add-MxTButton 'Send message' 112 (Get-MatriseTip 'ui.sendmsg') {
         Invoke-MxSendMessage
-    }
-    $btnMsg.Location = New-Object System.Drawing.Point(700, 5)
-    $tbar.Controls.Add($btnMsg)
+    } | Out-Null
 
-    $btnReq = New-MxButton -Text 'Requests' -Width 92 -Tip (Get-MatriseTip 'ui.requests') -OnClick {
-        Show-MxRequestsWindow -Policy $script:MxPolicy
-    }
-    $btnReq.Anchor = 'Top, Right'
-    $btnReq.Location = New-Object System.Drawing.Point(($tbar.Width - 200), 5)
-    $tbar.Controls.Add($btnReq)
+    Add-MxTSep
+
+    # Current target, as a coloured pill that updates with Update-MxTargetLabel.
+    $tstat = Add-MxTLabel '' $script:MxDim
+    $tstat.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
+    $script:MxTargetLabel = $tstat
+
+    $tbar.Controls.Add($tflow)
+    $tbar.Controls.Add($tright)
 
     $plabel = New-MxLabel -Text '' -Size 9 -Color $script:MxDim
     $plabel.SetBounds(0, 0, 0, 0)
